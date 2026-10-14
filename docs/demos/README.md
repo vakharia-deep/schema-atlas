@@ -112,6 +112,16 @@ Query-pattern statistics require `pg_stat_statements`. Recorded application plan
 
 [Watch](application-capture.gif) · [Static image](application-capture.png) · [Full guide](../../README.md#capture-an-application-workflow)
 
+## Also try the latest features
+
+The same fictional shop database can be used for these additional workflows:
+
+| Feature | Steps | What to read |
+| --- | --- | --- |
+| **Sortable storage overview** | Open **Schema explorer → Table overview**. Click **Total size**, **Index size**, or **Data size**; click again to reverse the order. Use `mutate`, then **Refresh schema**, to see changes while retaining the sort. | Sizes belong to each object. Data includes TOAST and overhead; partition parents do not sum their children. [Overview guide](../../README.md#use-the-schema-explorer). |
+| **Index usage** | Open **Query profiling → Index usage**. Run `add-index`, then `workload`, and click **Refresh index usage**. Search for `products_sku_idx`. | Its cumulative scan count reflects activity on this server. Compare with table access counters; zero scans is not a removal recommendation. This feature needs no extension, even though the shared demo fixture enables capture modules. [Index usage guide](../../README.md#inspect-index-usage). |
+| **Slow-query logs** | Open **Query profiling → Slow-query logs** and choose a small existing PostgreSQL JSON-lines or text log file. For structured logs in this demo, `dbname` must be `atlas_demo`. Filter executions and choose **Review in profiler**. | Review copies SQL without running it. Supply parameters and explicitly choose **Explain only** or **Run & profile**. Imports stay local to the browser. Use fictional SQL in public recordings. [Import guide](../../README.md#import-existing-slow-query-logs). |
+
 ## Updating the media
 
 Record the running demo UI at 1280 × 720 using only its fictional data. Exclude browser chrome, connection forms, saved profiles and unrelated applications. Review every frame before publishing. Raw captures and rendering scratch files belong in the ignored `artifacts/` directory; only the reviewed GIFs and static PNGs belong here.

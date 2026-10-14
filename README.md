@@ -2,13 +2,21 @@
 
 A browser-based PostgreSQL explorer for understanding schemas, running read-only SQL, and investigating query plans. Connect directly to a database, independently of its application framework or ORM.
 
-The application has three workspaces:
+The application has three workspaces: **Schema explorer**, **SQL workspace**, and **Query profiling**.
 
-| Workspace | Use it to |
+| Feature | What you can do |
 | --- | --- |
-| **Schema explorer** | Browse ER diagrams, follow relationships, inspect table/index/partition metadata, and refresh after schema changes. |
-| **SQL workspace** | Run read-only queries with table-name completion, inspect entire result rows, and export results. |
-| **Query profiling** | Capture application activity, inspect estimated or measured plans, identify index usage, and compare runs. |
+| **ER diagram and relationship explorer** | Browse catalog foreign keys, focus on a table's neighbors, follow related tables, and inspect columns, indexes, constraints and partitions. |
+| **Sortable table overview** | Sort any of ten columns in either direction. Compare **Total size**, **Index size**, and **Data size**; sorting survives filters and schema refreshes within the page. |
+| **Schema refresh and changes** | Refresh after migrations and see what changed since the previous successful snapshot. |
+| **Read-only SQL workspace** | Complete table names from the selected database, run queries, inspect entire result rows, and export results. |
+| **Plan inspector and comparison** | Explain parameterized SQL, optionally measure a read-only execution, inspect its index/scan evidence, and compare retained plans. No extension is needed. |
+| **Index usage** | Inspect built-in index/table counters, index sizes, constraint flags and last-scan times. Filter recorded activity and refresh the snapshot without `pg_stat_statements`. |
+| **Slow-query logs** | Import existing PostgreSQL JSON-lines or text logs locally, filter/paginate recorded executions, and review SQL in Plan inspector. Importing never runs the SQL. |
+| **Application capture** | Capture query-pattern aggregates through `pg_stat_statements`, or recorded application plans through `auto_explain` and JSON logging. Each capability has separate dependencies. |
+| **Saved connections** | Keep encrypted connection profiles across app restarts and select the database from the dropdown. |
+
+[Read the schema guide](#use-the-schema-explorer) · [Profile without extensions](#profile-without-postgresql-extensions) · [Check feature dependencies](#feature-dependencies-and-what-stops-working)
 
 **Status:** under active development. Schema Atlas is the current working name. This is a local application with a Node.js backend, not a static site or a hosted multi-user database service. Feature descriptions below reflect the current implementation; future database administration features are not implied.
 
@@ -92,7 +100,7 @@ npm start -- --port 8788
 
 The server binds to `127.0.0.1`; supported ports are 1024–65535. There is no frontend build step. Reload the browser after frontend changes; restart the Node.js process after backend changes. Saved connections remain available after restarting the app.
 
-**Start without installing any PostgreSQL extension.** Schema exploration, metadata, SQL queries, and manual query profiling work without one. Enable the additional PostgreSQL components only when you want to capture application activity.
+**Start without installing any PostgreSQL extension.** Schema exploration, storage sizes, SQL queries, manual plans, built-in index usage, and local slow-log import work without one. Index counters need `track_counts`; import needs suitable existing duration logs. Enable the additional PostgreSQL components only when you want to capture application activity.
 
 ## Requirements and compatibility
 
@@ -510,6 +518,12 @@ A positive delta means the comparison value increased; a negative delta means it
 | Node times are **—** | Expected with `auto_explain.log_timing = off`; statement duration and other measurements may still be available. |
 | A pattern has more placeholders than the original query | Statistics normalize literal constants. Supply the full set of parameter values or use the original application SQL. |
 | Plan index context cannot find a relation | Refresh after DDL. System/temporary/inaccessible relations may be absent from the schema snapshot. Without a recorded schema, multiple matches may be shown. |
+| Data/Index size is unavailable or a partition parent shows zero | Ordinary views and foreign tables have no local storage figure. Partition parents show their own storage; inspect the child rows for their sizes. |
+| Index usage shows no scans or stale counters | Check `track_counts`, refresh after completed activity, and consider statistics lag, resets and whether the workload ran on this server. Zero scans alone does not justify dropping an index. |
+| Index Last scan is unavailable | This field needs PostgreSQL 16+; an index without a recorded last scan also shows unavailable. |
+| Slow-log import finds no executions | Use raw UTF-8 PostgreSQL JSON-lines/stderr text with duration and statement/execute SQL in the same record. Check the selected database; CSV and provider wrappers are unsupported. |
+| Imported log says database unverified | Text prefixes are not parsed for database identity. Confirm the file belongs to the selected database before reviewing or profiling its SQL. |
+| Slow-log file or result exceeds a limit | Export a smaller time window: input is capped at 2 MB and retained output at 500 executions / 1 MB. Reported limits mean coverage is incomplete. |
 | Capture expired | Discard the interval and start a shorter session. Captures have a 30-minute limit. |
 | Rotation, reset, eviction or limit warning | Treat the result as incomplete. Reproduce a shorter window after the event; the tool does not stitch old logs together or reset counters. |
 | Query/result/plan too large | Narrow selected columns, shorten SQL/capture duration, or inspect a smaller query. The app enforces response and plan bounds. |
@@ -539,6 +553,7 @@ A positive delta means the comparison value increased; a negative delta means it
 | Saved-profile access identity | Persistent HttpOnly browser cookie, renewed for one year when the app opens. |
 | Active credentials and schema-change baseline | Server memory; released on disconnect, expiry or server shutdown. |
 | SQL drafts, history, results, profiling results and baselines | Browser-tab memory; cleared on reload/disconnect. The app does not write them to localStorage or a server results archive. |
+| Imported slow-log records | Per-connection browser-tab memory; cleared with **Clear imported logs**, reload or disconnect. File contents are never uploaded. Explicitly generated plans follow Plan inspector's separate retention rules. |
 | Active capture start snapshot/cursor | Server session memory; usable for up to 30 minutes. Reload can recover an active cursor within that session, but backend restart cannot. |
 | Diagram positions | Optional local browser preferences. |
 | Exported JSON | Files downloaded explicitly by the user; no automatic deletion. |
