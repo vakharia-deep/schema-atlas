@@ -22,7 +22,7 @@ const fmt=v=>v==null?'Not declared':typeof v==='object'?JSON.stringify(v):String
 const shortType=v=>(v||'unknown').replace('timestamp without time zone','timestamp').replace('timestamp with time zone','timestamptz');
 const current=()=>state.model?.tables.find(t=>t.id===state.selected);
 function notify(text){$('toast').textContent=text;$('toast').hidden=false;clearTimeout(notify.timer);notify.timer=setTimeout(()=>$('toast').hidden=true,3500);}
-function sourceLine(s){return el('div',{class:'source-ref'},s?.kind==='postgres'?'PostgreSQL catalog':s?`${s.file}:${s.line}`:'');}
+function sourceLine(){return el('div',{class:'source-ref'},'PostgreSQL catalog');}
 function sectionTitle(title,count){return el('div',{class:'section-title'},title,count!=null?el('span',{class:'count'},String(count)):null);}
 function note(message){return el('p',{class:'muted-note'},message);}
 function infoGrid(values){const grid=el('dl',{class:'details-grid'});for(const [k,v]of values)grid.append(el('dt',{},k),el('dd',{},fmt(v)));return grid;}
@@ -31,7 +31,7 @@ const partitionStrategy=t=>t.partitions.find(p=>p.type==='strategy');
 const partitionChildren=t=>t.partitions.filter(p=>p.type==='child');
 function objectKind(t){return partitionStrategy(t)?'Partitioned table':t.partitionOf?'Partition':t.kind||'Table';}
 function partitionLabel(t){const p=partitionStrategy(t);return p?`Partitioned · ${p.strategy||'unknown'}`:t.partitionOf?'Partition':t.kind||'Table';}
-function partitionStatus(t){return partitionStrategy(t)?'Yes':isLive()?(/view|foreign/.test(t.kind)?'Not applicable':'No'):'Not declared';}
+function partitionStatus(t){return partitionStrategy(t)?'Yes':/view|foreign/.test(t.kind)?'Not applicable':'No';}
 function humanBytes(v){if(v==null)return 'Unavailable';const n=Number(v);if(n<1024)return `${n} B`;const e=Math.min(4,Math.floor(Math.log(n)/Math.log(1024)));return `${(n/1024**e).toFixed(1)} ${['B','KB','MB','GB','TB'][e]}`;}
 function sqlDefinition(text){return el('details',{class:'definition-details'},el('summary',{},'SQL definition'),el('pre',{},text));}
 function updateConnectionState(data){
@@ -39,7 +39,7 @@ function updateConnectionState(data){
 }
 function connectionInventory(){
   const saved=state.session?.savedConnections||[],ids=new Set(saved.map(p=>p.id));
-  return [...saved,...(state.session?.connections||[]).filter(p=>!ids.has(p.profileId)),...(state.session?.repositories||[])];
+  return [...saved,...(state.session?.connections||[]).filter(p=>!ids.has(p.profileId))];
 }
 function connectionChoice(id){
   const live=state.session?.connections.find(c=>c.id===id);
@@ -71,7 +71,7 @@ async function refresh() {
   state.busy=true;$('refresh').disabled=true;$('repository').disabled=true;$('disconnect').disabled=true;document.body.classList.add('busy');$('scan-status').textContent='Reading schema metadata…';$('error').hidden=true;
   try {
     const id=$('repository').value;
-    const request=()=>fetch(id.startsWith('saved-')?'/api/profiles/'+id+'/connect':'/api/'+(id.startsWith('pg-')?'connections':'repositories')+'/'+encodeURIComponent(id)+'/refresh',{method:'POST',headers:{'X-Atlas-CSRF':state.session.csrf}});
+    const request=()=>fetch(id.startsWith('saved-')?'/api/profiles/'+id+'/connect':'/api/connections/'+encodeURIComponent(id)+'/refresh',{method:'POST',headers:{'X-Atlas-CSRF':state.session.csrf}});
     let response=await request();
     if(response.status===401&&id.startsWith('saved-')){
       const renewed=await fetch('/api/session');if(!renewed.ok)throw new Error('Could not restore your connection session.');
@@ -87,9 +87,8 @@ async function refresh() {
 function render() {
   const m=state.model;
   $('repo-title').textContent=m.repository.name;
-  $('source-type').textContent=isLive()?'PostgreSQL connected':'Repository reader';$('source-badge').textContent=isLive()?'● Live PostgreSQL':'Repository source';$('connection-dot').classList.remove('offline');$('disconnect').hidden=!isLive();
-  $('association-legend').hidden=isLive();
-  $('provenance').textContent=isLive()?'Live PostgreSQL catalog · Read-only snapshot':'Repository metadata · Database state unverified';
+  $('source-type').textContent='PostgreSQL connected';$('source-badge').textContent='● Live PostgreSQL';$('connection-dot').classList.remove('offline');$('disconnect').hidden=!isLive();
+  $('provenance').textContent='Live PostgreSQL catalog · Read-only snapshot';
   $('stat-tables').textContent=m.tables.length;
   $('stat-relations').textContent=m.relationships.length;
   $('stat-indexes').textContent=m.tables.reduce((sum,t)=>sum+t.indexes.length,0);
@@ -98,7 +97,7 @@ function render() {
   $('warning-count').textContent=m.warnings.length;
   $('change-count').textContent=m.changes.total;
   $('scan-status').textContent=`Updated ${new Date(m.scannedAt).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})} · ${m.scan.milliseconds} ms`;
-  $('revision').textContent=`Snapshot ${m.revision} · ${isLive()?`PostgreSQL ${m.database.version}`:`${m.migrations.length} migrations`}`;
+  $('revision').textContent=`Snapshot ${m.revision} · PostgreSQL ${m.database.version}`;
   renderList();renderGraph();renderInspector();renderOverview();renderRelationships();
 }
 function searchMatches(t){const q=state.query.toLowerCase().trim(),schema=$('schema-filter').value,partition=$('partition-filter').value;
@@ -179,7 +178,7 @@ function drawEdges() {
     const offset=Math.max(45,Math.abs(x2-x1)*.45),sign=right?1:-1;
     const d=r.from===r.to?`M ${x1} ${y1} C ${x1+90} ${y1}, ${x1+90} ${y1-65}, ${x1} ${y1-65}`:`M ${x1} ${y1} C ${x1+offset*sign} ${y1}, ${x2-offset*sign} ${y2}, ${x2} ${y2}`;
     const active=r.from===state.selected||r.to===state.selected;
-    const line=svg('path',{d,class:`${active?'highlight ':''}${r.kind==='association'?'association':''}`});
+    const line=svg('path',{d,class:active?'highlight':''});
     const title=svg('title');title.textContent=`${r.from} (${(r.columns||[r.column]).join(', ')}) → ${r.to} (${(r.targetColumns||[r.targetColumn]).join(', ')})`;line.append(title);$('edges').append(line);
     // A unique FK can reference each parent only once.
     const childMark=r.cardinality==='one_to_one'?`M ${x1+6*sign} ${y1-4} L ${x1+6*sign} ${y1+4}`:`M ${x1} ${y1-4} L ${x1+8*sign} ${y1} L ${x1} ${y1+4}`;
@@ -234,14 +233,14 @@ function saveLayout(){try{localStorage.setItem(`atlas-layout-v2:${state.model.re
 function loadLayout(){try{const stored=JSON.parse(localStorage.getItem(`atlas-layout-v2:${state.model.repository.id}:${state.model.repository.path}`)||'[]');if(Array.isArray(stored)&&stored.length<=5000)for(const[id,p]of stored)if(typeof id==='string'&&p&&Number.isFinite(p.x)&&Number.isFinite(p.y)&&p.x>=0&&p.y>=0&&p.x<100000&&p.y<100000)state.positions.set(id,p);}catch{/* Ignore malformed layout preferences. */}}
 
 function renderInspector() {
-  const pane=$('inspector');clear(pane);const t=current(),live=isLive();
+  const pane=$('inspector');clear(pane);const t=current();
   if(!t){pane.append(el('div',{class:'empty-panel'},el('h3',{},'Every detail, one click away.'),el('p',{},'Connect PostgreSQL, then select a table to inspect its columns, keys, indexes, constraints, partitions and more.')));return;}
-  const head=el('div',{class:'inspector-head'},el('div',{class:'inspector-kicker'},'OBJECT DETAILS',el('span',{class:'type-badge'},live?objectKind(t).toUpperCase():t.origin==='schema'?'SCHEMA ONLY':'MIGRATION')),el('h2',{},t.name),el('p',{class:'inspector-desc'},t.comment||`${t.prefix} schema · ${live?state.model.database.name:t.schemaModules[0]||'Repository metadata'}`),el('div',{class:'table-meta'},el('span',{},`${t.columns.length} columns`),el('span',{},`${t.indexes.length} indexes`),el('span',{},`${t.primaryKey.length} PK columns`)));
+  const head=el('div',{class:'inspector-head'},el('div',{class:'inspector-kicker'},'OBJECT DETAILS',el('span',{class:'type-badge'},objectKind(t).toUpperCase())),el('h2',{},t.name),el('p',{class:'inspector-desc'},t.comment||`${t.prefix} schema · ${state.model.database.name}`),el('div',{class:'table-meta'},el('span',{},`${t.columns.length} columns`),el('span',{},`${t.indexes.length} indexes`),el('span',{},`${t.primaryKey.length} PK columns`)));
   const partition=partitionStrategy(t),children=partitionChildren(t);
   const partitionSummary=el('div',{class:'partition-summary'},el('strong',{},`Partitioned: ${partitionStatus(t)}`));
   if(partition)partitionSummary.append(el('span',{},`${partition.strategy||'Unknown method'} · ${children.length} direct partitions`),el('code',{},partition.key||'Key unavailable'));
   if(t.partitionOf)partitionSummary.append(el('span',{},'This table is a partition of'),button(t.partitionOf,()=>navigateTable(t.partitionOf),'reference-link'),el('code',{},t.options.partitionBound||'Bound unavailable'));
-  head.append(partitionSummary);if(live)head.append(button('⌨ Query table',()=>sqlWorkspace.table(t),'button query-table-button'));
+  head.append(partitionSummary);head.append(button('⌨ Query table',()=>sqlWorkspace.table(t),'button query-table-button'));
   const tabs=el('div',{class:'inspector-tabs',role:'tablist','aria-label':'Metadata categories'});
   for(const[id,label]of[['columns','Columns'],['indexes','Indexes'],['relations','Relations'],['details','Details']]){const b=button(label,()=>{state.tab=id;renderInspector();},state.tab===id?'active':'');b.setAttribute('role','tab');b.setAttribute('aria-selected',state.tab===id);tabs.append(b);}
   const content=el('div',{class:'inspector-content',role:'tabpanel'});pane.append(head,tabs,content);
@@ -252,58 +251,51 @@ function renderInspector() {
       if(c.primaryKey)heading.append(el('span',{class:'badge'},'PK'));if(c.reference)heading.append(el('span',{class:'badge fk'},'FK'));
       heading.append(el('span',{class:'column-data-type'},shortType(c.type)));row.append(heading);
       const attrs=el('div',{class:'column-attributes'},el('span',{class:'not-null'},c.nullable===false?'NOT NULL':c.nullable===true?'Nullable':'Nullability unverified'));
-      if(c.default!==null)attrs.append(el('span',{},`· Default: ${fmt(c.default)}`));if(c.origin==='schema')attrs.append(el('span',{},'· Schema declaration'));
+      if(c.default!==null)attrs.append(el('span',{},`· Default: ${fmt(c.default)}`));
       for(const key of ['size','precision','scale','comment','generated','identity'])if(c.options[key])attrs.append(el('span',{},`· ${key}: ${fmt(c.options[key])}`));
-      if(c.ectoType&&c.ectoType!==c.type)attrs.append(el('span',{},`· Ecto: ${c.ectoType}`));row.append(attrs);
+      row.append(attrs);
       const refs=c.references?.length?c.references:c.reference?[c.reference]:[];
       for(const r of refs){row.append(button(`↗ ${r.table}.${r.column}`,()=>navigateTable(r.table),'reference-link'));row.append(el('div',{class:'column-attributes'},`On delete: ${r.onDelete} · On update: ${r.onUpdate}`));}
-      const details=el('details',{class:'column-extra'},el('summary',{},live?'Catalog properties':'Declaration & options'),sourceLine(c.source));
-      const extra={...c.options,...(c.schemaOptions||{})};if(Object.keys(extra).length)details.append(infoGrid(Object.entries(extra).filter(([,v])=>v!=null)));
+      const details=el('details',{class:'column-extra'},el('summary',{},'Catalog properties'),sourceLine(c.source));
+      const extra=c.options;if(Object.keys(extra).length)details.append(infoGrid(Object.entries(extra).filter(([,v])=>v!=null)));
       for(const r of refs)details.append(infoGrid(Object.entries(r).filter(([k])=>!['table','column','onDelete','onUpdate'].includes(k))));row.append(details);content.append(row);
     }
   } else if(state.tab==='indexes') {
     content.append(sectionTitle('INDEXES',t.indexes.length));
-    if(!t.indexes.length)content.append(note(live?'No indexes on this object.':'No explicit indexes resolved from migrations.'));
+    if(!t.indexes.length)content.append(note('No indexes on this object.'));
     for(const i of t.indexes){
       const card=el('div',{class:'metadata-card'},el('span',{class:`tag${i.primary?' primary-tag':''}`},i.primary?'PRIMARY KEY':i.unique?'UNIQUE':'INDEX'),el('span',{class:'tag'},i.using.toUpperCase()),el('h3',{},i.name),el('code',{},i.columns.join(', ')));
       if(i.where)card.append(el('p',{},'Predicate'),el('code',{},fmt(i.where)));if(i.include?.length)card.append(el('p',{},`Include: ${i.include.join(', ')}`));
-      if(!live)card.append(el('p',{},`Concurrent: ${i.concurrently?'yes':'no'}`));
       if(i.statistics)card.append(el('p',{},`Size: ${humanBytes(i.statistics.bytes)}`));
       const extra=Object.entries(i.options||{}).filter(([k,v])=>v!=null&&!['name','using','where','include','concurrently','unique','prefix','sql'].includes(k));if(extra.length)card.append(infoGrid(extra));
       if(i.definition)card.append(sqlDefinition(i.definition));card.append(sourceLine(i.source));content.append(card);
     }
   } else if(state.tab==='relations') {
     const relations=state.model.relationships.filter(r=>r.from===t.id||r.to===t.id);content.append(sectionTitle('RELATIONSHIPS',relations.length));
-    if(!relations.length)content.append(note(live?'No foreign-key constraints reference this object. Relationships without database constraints cannot be inferred.':'No resolved foreign keys or direct belongs_to associations.'));
+    if(!relations.length)content.append(note('No foreign-key constraints reference this object. Relationships without database constraints cannot be inferred.'));
     for(const r of relations){
       const outgoing=r.from===t.id,target=outgoing?r.to:r.from;
-      const card=el('div',{class:'metadata-card'},el('span',{class:'tag'},r.kind==='foreign_key'?'FOREIGN KEY':'ECTO ASSOCIATION'),el('h3',{},r.name||`${r.from}.${r.column}`),el('code',{},`${r.from} (${(r.columns||[r.column]).join(', ')}) → ${r.to} (${(r.targetColumns||[r.targetColumn]).join(', ')})`),button(`Open ${target}`,()=>navigateTable(target),'reference-link'),el('p',{},outgoing?'Outgoing reference to parent.':'Incoming reference from child.'),r.kind==='association'?el('p',{},'Application association; a database constraint is unverified.'):el('p',{},`Delete: ${r.onDelete} · Update: ${r.onUpdate}`));
-      if(live)card.append(infoGrid([['Cardinality',r.cardinality==='one_to_one'?'One to one':'Many to one'],['Nullable reference',r.optional],['Validated',r.validated],['Deferrable',r.deferrable],['Initially deferred',r.initiallyDeferred],['Match',r.match],['Inherited',r.inherited]]));card.append(sourceLine(r.source));content.append(card);
+      const card=el('div',{class:'metadata-card'},el('span',{class:'tag'},'FOREIGN KEY'),el('h3',{},r.name||`${r.from}.${r.column}`),el('code',{},`${r.from} (${(r.columns||[r.column]).join(', ')}) → ${r.to} (${(r.targetColumns||[r.targetColumn]).join(', ')})`),button(`Open ${target}`,()=>navigateTable(target),'reference-link'),el('p',{},outgoing?'Outgoing reference to parent.':'Incoming reference from child.'),el('p',{},`Delete: ${r.onDelete} · Update: ${r.onUpdate}`));
+      card.append(infoGrid([['Cardinality',r.cardinality==='one_to_one'?'One to one':'Many to one'],['Nullable reference',r.optional],['Validated',r.validated],['Deferrable',r.deferrable],['Initially deferred',r.initiallyDeferred],['Match',r.match],['Inherited',r.inherited]]));card.append(sourceLine(r.source));content.append(card);
     }
-    if(!live){content.append(sectionTitle('ECTO ASSOCIATIONS',t.associations.length));for(const a of t.associations)content.append(el('div',{class:'metadata-card'},el('span',{class:'tag'},a.kind.replaceAll('_',' ')),el('h3',{},a.name),el('code',{},fmt(a.targetModule)),infoGrid(Object.entries(a.options)),sourceLine(a.source)));}
   } else {
-    content.append(sectionTitle('TABLE PROPERTIES'),infoGrid([['Schema',t.prefix],['Partitioned',partitionStatus(t)],['Is a partition',live?(t.partitionOf?'Yes':'No'):'Unverified'],['Primary key',t.primaryKey.join(', ')||'None'],['Source',live?'PostgreSQL catalog':t.origin],['Database state',live?'Live snapshot':'Unverified (repository scan)']]));
-    if(live)content.append(infoGrid([['Object type',t.kind],['Total size',humanBytes(t.statistics.totalBytes)],['Estimated rows',t.statistics.estimatedRows??'Not analyzed']]));
+    content.append(sectionTitle('TABLE PROPERTIES'),infoGrid([['Schema',t.prefix],['Partitioned',partitionStatus(t)],['Is a partition',t.partitionOf?'Yes':'No'],['Primary key',t.primaryKey.join(', ')||'None'],['Source','PostgreSQL catalog'],['Database state','Live snapshot']]));
+    content.append(infoGrid([['Object type',t.kind],['Total size',humanBytes(t.statistics.totalBytes)],['Estimated rows',t.statistics.estimatedRows??'Not analyzed']]));
     if(Object.keys(t.options).length)content.append(sectionTitle('TABLE OPTIONS'),infoGrid(Object.entries(t.options)));
     if(t.viewDefinition)content.append(sqlDefinition(t.viewDefinition));
     content.append(el('br'),sectionTitle('PARTITIONS',partitionChildren(t).length));
     if(t.partitionOf)content.append(el('div',{class:'metadata-card'},el('h3',{},'Partition of'),button(t.partitionOf,()=>navigateTable(t.partitionOf),'reference-link'),el('code',{},t.options.partitionBound||'Bound not resolved')));
-    if(!t.partitions.length&&!t.partitionOf)content.append(note(live?'This object is not partitioned.':'No resolved partition declarations.'));
+    if(!t.partitions.length&&!t.partitionOf)content.append(note('This object is not partitioned.'));
     for(const p of t.partitions)content.append(el('div',{class:'metadata-card'},el('span',{class:'tag'},p.type==='strategy'?p.strategy.toUpperCase():'PARTITION'),el('h3',{},p.key||p.name),p.type==='child'?button('Open partition',()=>navigateTable(p.name),'reference-link'):null,p.bound?el('code',{},p.bound):null,sourceLine(p.source)));
     content.append(el('br'),sectionTitle('CONSTRAINTS',t.constraints.length));if(!t.constraints.length)content.append(note('No explicit constraints on this object.'));
     for(const c of t.constraints)content.append(el('div',{class:'metadata-card'},el('span',{class:'tag'},c.type.toUpperCase()),el('h3',{},c.name),el('code',{},fmt(c.definition)),c.options?infoGrid(Object.entries(c.options)):null,sourceLine(c.source)));
-    if(live){
-      content.append(el('br'),sectionTitle('TRIGGERS',t.triggers.length));if(!t.triggers.length)content.append(note('No user-defined triggers.'));
-      for(const tr of t.triggers)content.append(el('div',{class:'metadata-card'},el('h3',{},tr.name),el('p',{},`Enabled: ${{O:'origin / local',D:'disabled',R:'replica',A:'always'}[tr.enabled]||tr.enabled}`),el('code',{},tr.definition)));
-      content.append(el('br'),sectionTitle('ROW SECURITY POLICIES',t.policies.length));if(!t.policies.length)content.append(note('No row security policies.'));
-      for(const policy of t.policies)content.append(el('div',{class:'metadata-card'},el('h3',{},policy.name),infoGrid(Object.entries(policy).filter(([k])=>k!=='name'))));
-      content.append(el('br'),sectionTitle('TABLE GRANTS',t.grants.length));
-      for(const grant of t.grants)content.append(el('div',{class:'metadata-card'},el('h3',{},grant.grantee),el('code',{},grant.privilege),el('p',{},`Grantor: ${grant.grantor} · Grantable: ${grant.grantable?'yes':'no'}`)));
-      content.append(note('Grants are catalog ACL entries. Role inheritance and column-specific privileges are not expanded.'));
-    } else {
-      content.append(el('br'),sectionTitle('SOURCE DECLARATIONS',t.sources.length));for(const s of t.sources)content.append(sourceLine(s));
-      const relevant=state.model.warnings.filter(w=>t.sources.some(s=>s.file===w.file));if(relevant.length){content.append(el('br'),sectionTitle('SOURCE WARNINGS',relevant.length));for(const w of relevant)content.append(el('div',{class:'metadata-card'},el('p',{},w.message),sourceLine(w)));}
-    }
+    content.append(el('br'),sectionTitle('TRIGGERS',t.triggers.length));if(!t.triggers.length)content.append(note('No user-defined triggers.'));
+    for(const tr of t.triggers)content.append(el('div',{class:'metadata-card'},el('h3',{},tr.name),el('p',{},`Enabled: ${{O:'origin / local',D:'disabled',R:'replica',A:'always'}[tr.enabled]||tr.enabled}`),el('code',{},tr.definition)));
+    content.append(el('br'),sectionTitle('ROW SECURITY POLICIES',t.policies.length));if(!t.policies.length)content.append(note('No row security policies.'));
+    for(const policy of t.policies)content.append(el('div',{class:'metadata-card'},el('h3',{},policy.name),infoGrid(Object.entries(policy).filter(([k])=>k!=='name'))));
+    content.append(el('br'),sectionTitle('TABLE GRANTS',t.grants.length));
+    for(const grant of t.grants)content.append(el('div',{class:'metadata-card'},el('h3',{},grant.grantee),el('code',{},grant.privilege),el('p',{},`Grantor: ${grant.grantor} · Grantable: ${grant.grantable?'yes':'no'}`)));
+    content.append(note('Grants are catalog ACL entries. Role inheritance and column-specific privileges are not expanded.'));
   }
 }
 function navigateTable(id){if(!state.model.tables.some(t=>t.id===id)){notify('Referenced object is outside the visible schemas or snapshot.');return;}state.query='';$('search').value='';$('schema-filter').value='';$('partition-filter').value='';$('diagram-search').value='';selectTable(id,true);}
@@ -313,7 +305,7 @@ function renderOverview(){
   table.append(el('thead',{},el('tr',{},['TABLE','TYPE','PARTITIONING','COLUMNS','INDEXES','FOREIGN KEYS','EST. ROWS','TOTAL SIZE'].map(s=>el('th',{},s)))));
   const tbody=el('tbody'),references=new Map();for(const r of state.model.relationships)if(r.kind==='foreign_key')references.set(r.from,(references.get(r.from)||0)+1);
   for(const t of visibleTables()){
-    const p=partitionStrategy(t),partitionText=[p?`${p.key} · ${partitionChildren(t).length} children`:null,t.partitionOf?`Partition of ${t.partitionOf}`:null].filter(Boolean).join(' · ')||(isLive()?'Not partitioned':'Not declared');
+    const p=partitionStrategy(t),partitionText=[p?`${p.key} · ${partitionChildren(t).length} children`:null,t.partitionOf?`Partition of ${t.partitionOf}`:null].filter(Boolean).join(' · ')||'Not partitioned';
     tbody.append(el('tr',{},el('td',{},button(t.id,()=>selectTable(t.id))),el('td',{},el('span',{class:'object-badge'+(p||t.partitionOf?' partition-badge':'')},objectKind(t))),el('td',{},partitionText),el('td',{},String(t.columns.length)),el('td',{},String(t.indexes.length)),el('td',{},String(references.get(t.id)||0)),el('td',{},t.statistics?.estimatedRows??'—'),el('td',{},humanBytes(t.statistics?.totalBytes))));
   }
   table.append(tbody);$('overview').append(table);
@@ -346,14 +338,13 @@ function relationshipCard(group){
   function binding(r){
     const from=r.columns||[r.column],to=r.targetColumns||[r.targetColumn];
     const detail=el('div',{class:'relationship-binding'},
-      el('div',{class:'relationship-binding-name'},r.kind==='association'?'Application association':r.name||'Foreign key'));
+      el('div',{class:'relationship-binding-name'},r.name||'Foreign key'));
     from.forEach((name,i)=>detail.append(el('div',{class:'relationship-mapping'},el('code',{},r.from+'.'+name),el('span',{'aria-label':'references'},'→'),el('code',{},r.to+'.'+(to[i]||'?')))));
     const cardinality=r.cardinality==='one_to_one'?'One → one':r.cardinality==='many_to_one'?'Many → one':'Cardinality unverified';
     const optional=typeof r.optional==='boolean'?r.optional:typeof r.nullable==='boolean'?r.nullable:null;
     detail.append(el('p',{class:'relationship-rules'},cardinality+(optional===null?'':optional?' · Nullable reference':' · Required reference')+(r.inherited?' · Inherited key':'')));
     const more=el('details',{class:'relationship-key-details'},el('summary',{},'Key details'));
     more.append(infoGrid([['On delete',r.onDelete],['On update',r.onUpdate],['Validated',r.validated],['Deferrable',r.deferrable],['Initially deferred',r.initiallyDeferred]].filter(([,v])=>v!==undefined)));
-    if(r.kind==='association')more.append(note('Application association; a database constraint is unverified.'));
     detail.append(more);return detail;
   }
   card.append(binding(group.links[0]));
@@ -425,11 +416,10 @@ function showReport(kind) {
     body.append(el('p',{},'Comparison is against the previous successful snapshot for this connection. Columns, indexes, constraints, partitions, triggers, policies and grants are compared. Changing row estimates or storage sizes does not count as a schema change.'));
   } else {
     $('report-title').textContent='Know what you’re looking at';$('report-eyebrow').textContent='SCAN COVERAGE';const m=state.model;
-    body.append(el('p',{},m.coverage.note),el('p',{},m.coverage.migrationDefaults));
-    if(isLive())body.append(infoGrid([['Database',m.database.name],['Server',`${m.database.host}:${m.database.port}`],['PostgreSQL',m.database.version],['Connected as',m.database.username],['Transport',m.database.tls?'Verified TLS':'Local / SSH tunnel'],['Read-only transaction',m.database.readOnly],['Snapshot isolation',m.database.isolation],['Encoding',m.database.encoding],['Collation',m.database.collation],['Objects',m.tables.length],['Scan duration',`${m.scan.milliseconds} ms`]]),el('p',{},'All indexes, including primary-key indexes, are included. Ordinary tables, partitions, views, materialized views and foreign tables are shown in schemas accessible to the connected role. System schemas are excluded. Cross-database links are not inferred. PostgreSQL 12+ is required.'));
-    else body.append(infoGrid([['Repository',m.repository.path],['Files parsed',m.scan.files],['Migrations',m.migrations.length],['Scan duration',`${m.scan.milliseconds} ms`]]));
+    body.append(el('p',{},m.coverage.note),el('p',{},m.coverage.metadataNotes));
+    body.append(infoGrid([['Database',m.database.name],['Server',`${m.database.host}:${m.database.port}`],['PostgreSQL',m.database.version],['Connected as',m.database.username],['Transport',m.database.tls?'Verified TLS':'Local / SSH tunnel'],['Read-only transaction',m.database.readOnly],['Snapshot isolation',m.database.isolation],['Encoding',m.database.encoding],['Collation',m.database.collation],['Objects',m.tables.length],['Scan duration',`${m.scan.milliseconds} ms`]]),el('p',{},'All indexes, including primary-key indexes, are included. Ordinary tables, partitions, views, materialized views and foreign tables are shown in schemas accessible to the connected role. System schemas are excluded. Cross-database links are not inferred. PostgreSQL 12+ is required.'));
     for(const w of m.warnings)body.append(el('div',{class:'report-row'},el('div',{},w.message),sourceLine(w)));
-    if(!m.warnings.length)body.append(el('p',{},isLive()?'Catalog scan completed successfully. Refresh to see newer DDL changes.':'No unsupported operations were reported. Live database state is unverified.'));
+    if(!m.warnings.length)body.append(el('p',{},'Catalog scan completed successfully. Refresh to see newer DDL changes.'));
   }
   $('report').showModal();
 }
@@ -460,7 +450,7 @@ document.addEventListener('keydown',e=>{
 const welcome=$('empty').firstElementChild.cloneNode(true);
 function disconnected(){
   resetRelationshipExplorer();state.model=null;sqlWorkspace.setConnection(null);profilingWorkspace.setConnection(null);state.selected=null;state.positions.clear();state.zoom=1;state.query='';$('search').value='';$('diagram-search').value='';$('partition-filter').value='';$('visible-count').textContent='0 objects';transform();clear($('nodes'));clear($('edges'));clear($('table-list'));clear($('overview'));$('empty').replaceChildren(welcome.cloneNode(true));$('empty').hidden=false;$('empty').querySelector('button').addEventListener('click',openConnection);
-  $('association-legend').hidden=true;$('repo-title').textContent='No database connected';$('source-type').textContent='Not connected';$('source-badge').textContent='PostgreSQL catalog';$('connection-dot').classList.add('offline');$('scan-status').textContent='Connect a database to begin';$('revision').textContent='Waiting for a connection';$('provenance').textContent='Read-only PostgreSQL catalog inspection';$('disconnect').hidden=true;$('save-connection').hidden=true;$('refresh').disabled=true;$('export').disabled=true;$('error').hidden=true;
+  $('repo-title').textContent='No database connected';$('source-type').textContent='Not connected';$('source-badge').textContent='PostgreSQL catalog';$('connection-dot').classList.add('offline');$('scan-status').textContent='Connect a database to begin';$('revision').textContent='Waiting for a connection';$('provenance').textContent='Read-only PostgreSQL catalog inspection';$('disconnect').hidden=true;$('save-connection').hidden=true;$('refresh').disabled=true;$('export').disabled=true;$('error').hidden=true;
   for(const key of ['stat-tables','stat-relations','stat-indexes','stat-partitions'])$(key).textContent='—';for(const key of ['table-count','warning-count','change-count'])$(key).textContent='0';clear($('schema-filter'));$('schema-filter').append(el('option',{value:''},'All schemas'));renderInspector();view('graph');
 }
 function openConnection(){if(state.busy||state.sqlBusy)return;renderConnections();$('connection-error').hidden=true;$('connection-dialog').showModal();}
@@ -551,7 +541,7 @@ $('query-connect').addEventListener('click',()=>{sqlWorkspace.setFullscreen(fals
 async function boot(){
   try{
     const res=await fetch('/api/session');if(!res.ok)throw new Error('The local server is unavailable.');state.session=await res.json();
-    const selected=state.session.selectedProfileId||state.session.connections[0]?.id||state.session.repositories[0]?.id||'';
+    const selected=state.session.selectedProfileId||state.session.connections[0]?.id||'';
     renderConnections(selected);if(selected)await refresh();else disconnected();
     if(state.session.storage&&!state.session.storage.available){$('error').textContent=state.session.storage.message;$('error').hidden=false;}
   }catch(error){$('error').textContent=error.message;$('error').hidden=false;}

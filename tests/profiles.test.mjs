@@ -56,7 +56,7 @@ test('concurrent profile saves retain every distinct profile and enforce profile
 });
 async function start(f){
   const instances=[];
-  const server=createApp([],{profileStore:new ProfileStore(f.directory,{keyProvider:f.keyProvider}),providerFactory:(config,id)=>{
+  const server=createApp({profileStore:new ProfileStore(f.directory,{keyProvider:f.keyProvider}),providerFactory:(config,id)=>{
     const provider={id,config,publicInfo:()=>({id,name:config.name,host:config.host,port:config.port,database:config.database,user:config.user,tls:config.tls,provider:'postgres'}),
       inspect:async()=>({repository:{id,name:config.name},tables:[],capabilities:{provider:'postgres'}}),
       close:async()=>{config.password='';provider.closed=true;}};
@@ -113,7 +113,7 @@ test('temporary connections can be saved explicitly; storage failures do not sil
   const live=await(await one.post(app.url,'/api/connections',details())).json();assert.equal(live.savedConnections.length,0);
   assert.equal((await two.post(app.url,'/api/connections/'+live.connection.id+'/save')).status,404);
   const saved=await one.post(app.url,'/api/connections/'+live.connection.id+'/save');assert.equal(saved.status,200);assert.equal((await saved.json()).savedConnections.length,1);
-  const locked=createApp([],{profileStore:new ProfileStore(f.directory,{keyProvider:async()=>{throw new AtlasError('PROFILE_STORE','Unavailable.',503);}})});
+  const locked=createApp({profileStore:new ProfileStore(f.directory,{keyProvider:async()=>{throw new AtlasError('PROFILE_STORE','Unavailable.',503);}})});
   await new Promise(r=>locked.listen(0,'127.0.0.1',r));t.after(()=>new Promise(r=>{locked.closeAllConnections();locked.close(r);}));
   const lockedSession=(await one.boot('http://127.0.0.1:'+locked.address().port)).session;
   assert.equal(lockedSession.storage.available,false);

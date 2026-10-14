@@ -48,10 +48,6 @@ Schema Atlas is a read-only catalog viewer and SQL workspace for the operating-s
 - Captures retain bounded statistics and an internal log cursor in the owning server session for at most 30 minutes of usable capture time. Disconnect/expiry/shutdown releases them. Log reads stop at 512 KB and 2,500 records; plan output stops at 100 plans, each at most 1,000 nodes and 40 levels. Rotation, truncation and counter resets are reported as incomplete evidence.
 - Profiling does not install extensions, change server settings, create indexes or reset counters. Setup is diagnostic. Database-managed logging continues independently of browser capture; SQL literals can be present in PostgreSQL logs. The suggested auto_explain configuration disables parameter logging. Results/baselines remain in browser memory, with eight retained plans per connection.
 
-## Optional legacy repository reader
-
-Only explicitly configured `--repo` paths or `--demo` activate this provider. Sources are parsed with Elixir's syntax parser and never evaluated, compiled, expanded or run through Mix. File count/size, directory depth, AST depth, parser time/output and VM memory are bounded. Symlinks are excluded, paths must stay under the configured root, and files use `O_NOFOLLOW`. This subprocess is resource-limited, not an OS sandbox.
-
 ## Verification
 
 Tests cover cross-origin/host/CSRF rejection; browser session ownership and expiry; input/egress validation; connection caps; password removal; least-privilege real PostgreSQL catalog access; consistent read-only scans; TLS trust and hostname verification; refresh additions/removals; failure retention; query RLS/permissions, bounded output, exact values, cancellation/timeout cleanup and single-statement/read-only enforcement. Dependencies are pinned in `package-lock.json` and checked with `npm audit --omit=dev`. Snyk is not installed on this host, so a SAST result is unavailable.

@@ -1,9 +1,8 @@
 import http from 'node:http';
-import { readFile, realpath } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { EctoRepositoryProvider } from './lib/repository.mjs';
 import { PostgresProvider, AtlasError, validateConnection } from './lib/postgres.mjs';
 import { QueryJob, validateQuery } from './lib/query.mjs';
 import { ProfilingJob } from './lib/profiling.mjs';
@@ -41,7 +40,7 @@ async function readJSON(req){
 }
 function requireEmpty(req){if(req.headers['transfer-encoding']||Number(req.headers['content-length']||0)!==0)throw new AtlasError('INPUT','This endpoint does not accept a request body.',413);}
 
-export function createApp(providers=[],{scanLimit=30,sessionTTL=30*60_000,providerFactory=(config,id)=>new PostgresProvider(config,id),queryFactory=(config,input)=>new QueryJob(config,input),queryLimit=30,profileStore=null,profilingFactory=config=>new ProfilingJob(config)}={}){
+export function createApp({scanLimit=30,sessionTTL=30*60_000,providerFactory=(config,id)=>new PostgresProvider(config,id),queryFactory=(config,input)=>new QueryJob(config,input),queryLimit=30,profileStore=null,profilingFactory=config=>new ProfilingJob(config)}={}){
   const sessions=new Map();let requests=[],scans=[],queries=[],activeScans=0,activeQueries=0;
   async function removeSession(id){const s=sessions.get(id);if(!s)return;sessions.delete(id);for(const job of s.jobs.values())job.runner.stop();await Promise.allSettled([...s.connections.values()].map(p=>p.close()));s.connections.clear();s.captures.clear();}
   function expire(){const now=Date.now();for(const[id,s]of sessions)if(now-s.touched>sessionTTL||now-s.created>8*60*60_000)void removeSession(id);}
@@ -89,7 +88,7 @@ export function createApp(providers=[],{scanLimit=30,sessionTTL=30*60_000,provid
         }
         if(profileStore){const cookies=res.getHeader('Set-Cookie');res.setHeader('Set-Cookie',[...(cookies?[cookies]:[]),'atlas_browser='+browserToken+'; HttpOnly; SameSite=Strict; Path=/; Max-Age=31536000']);}
         session.touched=now;
-        return json(res,200,{csrf:session.csrf,connections:inventory(session),...await savedInventory(session),repositories:providers.map(p=>({id:p.id,name:p.name,path:p.root,provider:'ecto-repository'})),capabilities:{query:true,queryMode:'read-only',postgres:true,refresh:true}});
+        return json(res,200,{csrf:session.csrf,connections:inventory(session),...await savedInventory(session),capabilities:{query:true,queryMode:'read-only',postgres:true,refresh:true}});
       }
       if(req.method!=='POST')return json(res,404,{error:'Endpoint not found.'});
       if(!session)return json(res,401,{error:'Your connection session expired. Reload the page and reconnect.'});
@@ -212,17 +211,9 @@ export function createApp(providers=[],{scanLimit=30,sessionTTL=30*60_000,provid
         scans=scans.filter(t=>now-t<60_000);if(scans.length>=scanLimit){res.setHeader('Retry-After','60');throw new AtlasError('BUSY','Please wait before refreshing again.',429);}scans.push(now);
         return json(res,200,await scan(provider));
       }
-      const legacy=url.pathname.match(/^\/api\/repositories\/([a-z0-9-]{1,80})\/refresh$/);
-      if(legacy){
-        requireEmpty(req);scans=scans.filter(t=>now-t<60_000);
-        if(scans.length>=scanLimit){res.setHeader('Retry-After','60');throw new AtlasError('BUSY','Please wait before refreshing again.',429);}scans.push(now);
-        const provider=providers.find(p=>p.id===legacy[1]);if(!provider)throw new AtlasError('NOT_FOUND','Repository not found.',404);
-        return json(res,200,await scan(provider));
-      }
       return json(res,404,{error:'Endpoint not found.'});
     }catch(error){
       if(error instanceof AtlasError)return json(res,error.status,{error:error.message,code:error.code,...(error.sqlState?{sqlState:error.sqlState}:{}),...(error.position?{position:error.position}:{})});
-      if(error.code==='SOURCE_SYNTAX')return json(res,422,{error:'Some Elixir files have syntax errors. Fix them and refresh; your last successful diagram is retained.',sources:error.sources});
       console.error('Schema Atlas request failed:',error.name||'request_error');
       return json(res,500,{error:'Could not complete the request. Your previous diagram is retained.'});
     }
@@ -232,17 +223,14 @@ export function createApp(providers=[],{scanLimit=30,sessionTTL=30*60_000,provid
   return server;
 }
 async function main(){
-  const argv=process.argv.slice(2),repoPaths=[];let port=8787;
+  const argv=process.argv.slice(2);let port=8787;
   for(let i=0;i<argv.length;i++){
-    if(argv[i]==='--repo'&&argv[i+1])repoPaths.push(argv[++i]);
-    else if(argv[i]==='--demo')repoPaths.push(path.join(root,'examples/phoenix_demo'));
-    else if(argv[i]==='--port'&&/^\d{4,5}$/.test(argv[i+1]||''))port=Number(argv[++i]);
-    else if(argv[i]==='--help'){console.log('Usage: node server.mjs [--port 8787]\nConnect PostgreSQL from the browser. Optional legacy reader: --repo /checkout or --demo.');return;}
+    if(argv[i]==='--port'&&/^\d{4,5}$/.test(argv[i+1]||''))port=Number(argv[++i]);
+    else if(argv[i]==='--help'){console.log('Usage: node server.mjs [--port 8787]\nConnect PostgreSQL from the browser.');return;}
     else throw new Error('Unknown or incomplete argument. Use --help.');
   }
-  if(port<1024||port>65535||repoPaths.length>12)throw new Error('Invalid port or too many repositories.');
-  const providers=[];for(const[i,repo]of repoPaths.entries()){if(repo.length>1024)throw new Error('Repository path is too long.');const resolved=await realpath(repo);providers.push(new EctoRepositoryProvider(resolved,`repo-${i+1}`,path.basename(resolved)==='phoenix_demo'?'Repository demo':path.basename(resolved)));}
-  const server=createApp(providers,{profileStore:new ProfileStore()});
+  if(port<1024||port>65535)throw new Error('Invalid port.');
+  const server=createApp({profileStore:new ProfileStore()});
   server.on('error',error=>{console.error(error.code==='EADDRINUSE'?'Port is in use. Choose another with --port.':'Server could not start.');process.exitCode=1;});
   server.listen(port,'127.0.0.1',()=>console.log(`Schema Atlas → http://127.0.0.1:${port}\nConnect to PostgreSQL in the browser · Read-only catalog inspection`));
   for(const signal of ['SIGTERM','SIGINT'])process.once(signal,()=>{server.closeAllConnections();server.close();});

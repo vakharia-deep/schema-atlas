@@ -92,7 +92,7 @@ test('profiling works without extensions for manual plans and reports missing ca
 
 test('profiling endpoints enforce ownership, CSRF, capture lifecycle, cancellation and busy limits',{timeout:30000},async t=>{
   let resolveJob,rejectJob,stops=0,working=false;
-  const server=createApp([],{
+  const server=createApp({
     providerFactory:(config,id)=>({id,config,publicInfo:()=>({id,name:'test'}),inspect:async()=>({tables:[],capabilities:{query:true}}),close:async()=>{}}),
     profilingFactory:()=>({stop(){stops++;rejectJob?.(Object.assign(new Error('cancelled'),{name:'AbortError'}));return true;},diagnostics:async()=>({statistics:{available:true},internal:{path:'private-server-path'}}),start:async()=>({startedAt:new Date().toISOString()}),finish:async()=>({rows:[],plans:[]}),explain:async()=>{working=true;return new Promise((r,j)=>{resolveJob=r;rejectJob=j;});}})
   });await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>{server.closeAllConnections();server.close();});const url=`http://127.0.0.1:${server.address().port}`;

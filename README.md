@@ -1,6 +1,6 @@
 # Schema Atlas
 
-A browser-based PostgreSQL explorer for understanding schemas, running read-only SQL, and investigating query plans. Connect directly to a database; no Phoenix, Elixir, ORM, or application repository is required.
+A browser-based PostgreSQL explorer for understanding schemas, running read-only SQL, and investigating query plans. Connect directly to a database, independently of its application framework or ORM.
 
 The application has three workspaces:
 
@@ -103,8 +103,7 @@ The server binds to `127.0.0.1`; supported ports are 1024–65535. There is no f
 | Automatic application-plan capture | PostgreSQL **15+** because this implementation reads PostgreSQL JSON logs. The setup example below targets **16** and identifies the 16-only setting. |
 | Saved credentials | An available OS credential store on the application host: macOS Keychain, Windows Credential Manager, or persistent Linux Secret Service. Native storage was tested on macOS; Windows/Linux behavior remains unverified. |
 | Remote connections | Verified TLS, or an existing SSH tunnel terminating on the application host. |
-| Optional repository reader | Elixir 1.17+/OTP 27+ for `--repo` / `--demo` only. |
-| Full development test suite | PostgreSQL server binaries and `pg_config`, OpenSSL, and Elixir/OTP, in addition to Node.js. See [verification](#development-and-verification). |
+| Full development test suite | PostgreSQL server binaries and `pg_config`, and OpenSSL, in addition to Node.js. See [verification](#development-and-verification). |
 
 A PostgreSQL server installation is **not** required on the application host when connecting to an existing remote database. The backend must remain running while the browser uses the tool.
 
@@ -543,7 +542,7 @@ Database work uses fresh, bounded connections rather than an idle connection poo
 | [web/query.js](web/query.js) | SQL editor, table completion, results, row modal and history. |
 | [web/profiling.js](web/profiling.js) | Capture, Plan inspector, Compare and Setup interfaces. |
 | [web/plan.js](web/plan.js) | Bounded plan projection, findings and comparison metrics. |
-| [lib/repository.mjs](lib/repository.mjs), [lib/schema.mjs](lib/schema.mjs), [lib/parse.exs](lib/parse.exs) | Optional static Ecto reader and shared schema-diff logic. |
+| [lib/schema-diff.mjs](lib/schema-diff.mjs) | Catalog snapshot comparisons for schema changes, excluding volatile statistics. |
 | [tests](tests) | Unit, HTTP and disposable PostgreSQL integration tests. |
 | [sbom.json](sbom.json) | Recorded dependency inventory. |
 
@@ -578,7 +577,7 @@ ATLAS_TEST_KEYCHAIN=1 npm test
 
 That environment-variable syntax is for POSIX shells. In PowerShell, set `$env:ATLAS_TEST_KEYCHAIN = '1'` before running `npm test`.
 
-The complete suite needs `pg_config` on `PATH`, matching PostgreSQL server binaries/modules, OpenSSL, and Elixir/OTP for the legacy parser tests. Fixtures create private temporary clusters with generated credentials, apply test-only schema/index changes, and clean them up. Run as a normal OS user capable of running `initdb`. These tests do not require production credentials or target an existing application database. Some older integration suites skip when PostgreSQL binaries are absent; profiling tests require them. Inspect skips/failures rather than treating missing tooling as a full pass.
+The complete suite needs `pg_config` on `PATH`, matching PostgreSQL server binaries/modules, and OpenSSL. Fixtures create private temporary clusters with generated credentials, apply test-only schema/index changes, and clean them up. Run as a normal OS user capable of running `initdb`. These tests do not require production credentials or target an existing application database. Some older integration suites skip when PostgreSQL binaries are absent; profiling tests require them. Inspect skips/failures rather than treating missing tooling as a full pass.
 
 | Test area | Coverage |
 | --- | --- |
@@ -587,31 +586,19 @@ The complete suite needs `pg_config` on `PATH`, matching PostgreSQL server binar
 | Profiling | Real statement statistics and auto_explain logs, workflow counts, index use before/after fixture index creation, estimated/measured distinctions, parameter binding, log filtering/limits/rotation, resets and cancellation. |
 | HTTP | Host/origin checks, CSRF, connection ownership, session expiry and request/concurrency budgets. |
 | Saved profiles | Encryption, tampering, ownership, private permissions, persistence/reconnect and missing-key failure. |
-| Completion and legacy reader | SQL completion contexts/catalog updates; static migration/schema interpretation and unsupported-source reporting. |
+| Completion and schema changes | SQL completion contexts/catalog updates; table/column/index/partition changes and statistics-only updates. |
 
 **Recorded validation, 2026-10-13:** 58 tests passed with no skips on macOS/PostgreSQL 16.15, including the native credential-store test. Dependency auditing reported zero known vulnerabilities at that time. Browser checks covered live application capture, manual plans, index metadata, comparison, cancellation, disconnected states, existing SQL/whole-row details, and laptop layouts. These are recorded results, not a substitute for rerunning checks after changes. Snyk Code was unavailable because its executable was not installed; source scanning remains unverified.
 
 **Documentation verification, 2026-10-14:** the configuration and SQL blocks in this README were applied to a disposable PostgreSQL 16 cluster. The smoke query produced ten measured rows without extensions; after setup, a capture recorded two application calls and two measured plans. The stop-logging command disabled application-plan capture on a new connection while keeping statement statistics available. Local file links, section anchors, code fences, npm script names and CLI help were checked. The full application suite was not rerun for this documentation-only update.
+
+**PostgreSQL-only cleanup verification, 2026-10-14:** after removing the application-repository reader, all 43 remaining tests passed with no skips, including native credential storage. Browser checks covered PostgreSQL connection/reconnect, ER relationships, index/partition metadata, scan coverage, an index change detected by refresh, SQL results and profiling readiness. The dependency audit reported zero known vulnerabilities. Node.js is the only application language runtime required.
 
 For optional manual fixture checks:
 
 - `node tests/helpers/demo-preview.mjs` starts an isolated fictional shop database/app at port 8791 for the [product walkthroughs](docs/demos/README.md). Commands: `add-index`, `workload`, `mutate`, and `stop`.
 - `node tests/helpers/preview.mjs` creates a disposable database and prints a private connection-file path. Enter `large` to create a large diagram, `mutate` to exercise schema refresh, and `stop` to clean up. Start the app separately.
 - `node tests/helpers/persistence-preview.mjs` starts a disposable database/app at port 8789. Enter `restart` to test reconnect after app restart, and `stop` to clean up the database, profile files and test key.
-
-For the legacy repository-only demo:
-
-```sh
-npm start -- --demo
-```
-
-Or inspect a local Ecto repository:
-
-```sh
-npm start -- --repo /path/to/your/phoenix-app
-```
-
-Only these optional modes require Elixir. They parse source without executing repository code; they do not prove which migrations were applied. **Scan coverage** identifies static-reader limitations. A repository-only source cannot query a database or use live profiling.
 
 ## Current boundaries
 

@@ -4,40 +4,57 @@ import { createApp } from '../server.mjs';
 import http from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { AtlasError } from '../lib/postgres.mjs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 
-async function app(t,options={}) {
-  let calls=0;const server=createApp([{id:'repo-1',name:'Test',root:'/approved/repository',inspect:async()=>{calls++;return {tables:[],capabilities:{query:false}};}}],options);
-  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>{server.closeAllConnections();server.close(resolve);}));
-  const url=`http://127.0.0.1:${server.address().port}`;const response=await fetch(url+'/api/session'),cookie=response.headers.get('set-cookie').split(';')[0],session=await response.json();return {url,session,cookie,calls:()=>calls};
-}
 test('serves app with CSP, no-store, no version banner, and no external scripts',async t=>{
-  const {url}=await app(t);const r=await fetch(url);assert.equal(r.status,200);assert.match(r.headers.get('content-security-policy'),/frame-ancestors 'none'/);assert.equal(r.headers.get('x-content-type-options'),'nosniff');assert.equal(r.headers.get('cache-control'),'no-store');assert.equal(r.headers.get('server'),null);assert.match(await r.text(),/Schema Atlas/);
+  const {url}=await connectionApp(t);const r=await fetch(url);assert.equal(r.status,200);assert.match(r.headers.get('content-security-policy'),/frame-ancestors 'none'/);assert.equal(r.headers.get('x-content-type-options'),'nosniff');assert.equal(r.headers.get('cache-control'),'no-store');assert.equal(r.headers.get('server'),null);assert.match(await r.text(),/Schema Atlas/);
 });
-test('valid refresh succeeds and session exposes only configured repositories',async t=>{
-  const {url,session,cookie,calls}=await app(t);assert.equal(session.repositories.length,1);assert.equal(session.capabilities.query,true);const r=await fetch(url+'/api/repositories/repo-1/refresh',{method:'POST',headers:{Cookie:cookie,'X-Atlas-CSRF':session.csrf}});assert.equal(r.status,200);assert.equal(calls(),1);
+test('cross-origin, invalid host and missing CSRF cannot read or refresh connections',async t=>{
+  const a=await connectionApp(t),b=await a.browser();
+  const connected=await b.post('/api/connections',details());assert.equal(connected.status,201);
+  const id=(await connected.json()).connection.id,route=`/api/connections/${id}/refresh`;
+  assert.equal(a.instances[0].scans,1);
+  assert.equal((await fetch(a.url+'/api/session',{headers:{Origin:'https://untrusted.example'}})).status,403);
+  const badHost=await new Promise((resolve,reject)=>{http.get(a.url+'/api/session',{headers:{Host:'untrusted.example'}},r=>{r.resume();resolve(r.statusCode);}).on('error',reject);});assert.equal(badHost,403);
+  assert.equal((await fetch(a.url+route,{method:'POST',headers:{Cookie:b.cookie}})).status,403);
+  assert.equal((await fetch(a.url+route,{method:'POST',headers:{Cookie:b.cookie,'X-Atlas-CSRF':b.session.csrf,Origin:'https://untrusted.example'}})).status,403);
+  assert.equal(a.instances[0].scans,1);
+  assert.equal((await b.post(route)).status,200);assert.equal(a.instances[0].scans,2);
 });
-test('cross-origin, invalid host and missing CSRF cannot read or refresh repositories',async t=>{
-  const {url,session,cookie,calls}=await app(t);assert.equal((await fetch(url+'/api/session',{headers:{Origin:'https://untrusted.example'}})).status,403);
-  const badHost=await new Promise((resolve,reject)=>{http.get(url+'/api/session',{headers:{Host:'untrusted.example'}},r=>{r.resume();resolve(r.statusCode);}).on('error',reject);});assert.equal(badHost,403);
-  assert.equal((await fetch(url+'/api/repositories/repo-1/refresh',{method:'POST',headers:{Cookie:cookie}})).status,403);
-  assert.equal((await fetch(url+'/api/repositories/repo-1/refresh',{method:'POST',headers:{Cookie:cookie,'X-Atlas-CSRF':session.csrf,Origin:'https://untrusted.example'}})).status,403);assert.equal(calls(),0);
-});
-test('arbitrary files, query endpoints and unknown repository IDs are unavailable',async t=>{
-  const {url,session,cookie,calls}=await app(t);for(const route of ['/server.mjs','/.env','/api/query','/api/source','/lib/parse.exs','/api/session?path=/etc/passwd'])assert.ok((await fetch(url+route)).status>=400);
-  assert.equal((await fetch(url+'/api/repositories/unknown/refresh',{method:'POST',headers:{Cookie:cookie,'X-Atlas-CSRF':session.csrf}})).status,404);assert.equal(calls(),0);
+test('arbitrary files, removed repository routes and unknown connection IDs are unavailable',async t=>{
+  const a=await connectionApp(t),b=await a.browser();
+  for(const route of ['/server.mjs','/.env','/api/query','/api/source','/lib/schema-diff.mjs','/api/session?path=/etc/passwd'])assert.ok((await fetch(a.url+route)).status>=400);
+  assert.equal((await b.post('/api/repositories/repo-1/refresh')).status,404);
+  assert.equal((await b.post('/api/connections/pg-'+randomBytes(12).toString('hex')+'/refresh')).status,404);assert.equal(a.instances.length,0);
 });
 test('refresh rate limit rejects work above the budget',async t=>{
-  const {url,session,cookie,calls}=await app(t,{scanLimit:2});const statuses=[];for(let i=0;i<3;i++){const r=await fetch(url+'/api/repositories/repo-1/refresh',{method:'POST',headers:{Cookie:cookie,'X-Atlas-CSRF':session.csrf}});statuses.push(r.status);if(i===2)assert.equal(r.headers.get('retry-after'),'60');}assert.deepEqual(statuses,[200,200,429]);assert.equal(calls(),2);
+  const a=await connectionApp(t,{scanLimit:2}),b=await a.browser();
+  const connected=await b.post('/api/connections',details());assert.equal(connected.status,201);
+  const id=(await connected.json()).connection.id,statuses=[];
+  for(let i=0;i<3;i++){const r=await b.post(`/api/connections/${id}/refresh`);statuses.push(r.status);if(i===2)assert.equal(r.headers.get('retry-after'),'60');}
+  assert.deepEqual(statuses,[200,200,429]);assert.equal(a.instances[0].scans,3);
 });
 test('request bodies are rejected before scanning',async t=>{
-  const {url,session,cookie,calls}=await app(t);const r=await fetch(url+'/api/repositories/repo-1/refresh',{method:'POST',headers:{Cookie:cookie,'X-Atlas-CSRF':session.csrf},body:'arbitrary source'});assert.equal(r.status,413);assert.equal(calls(),0);
+  const a=await connectionApp(t),b=await a.browser();
+  const connected=await b.post('/api/connections',details());assert.equal(connected.status,201);const id=(await connected.json()).connection.id;
+  const r=await b.post(`/api/connections/${id}/refresh`,{unexpected:true});assert.equal(r.status,413);assert.equal(a.instances[0].scans,1);
+  assert.equal((await b.post(`/api/connections/${id}/refresh`)).status,200);assert.equal(a.instances[0].scans,2);
+});
+test('CLI supports PostgreSQL startup and rejects the removed reader flags',async()=>{
+  const run=promisify(execFile),server=fileURLToPath(new URL('../server.mjs',import.meta.url));
+  const options={timeout:5000,maxBuffer:4096};
+  const {stdout}=await run(process.execPath,[server,'--help'],options);
+  assert.match(stdout,/Connect PostgreSQL from the browser/);assert.doesNotMatch(stdout,/--repo|--demo/);
+  for(const args of [['--repo','/unused'],['--demo']])await assert.rejects(run(process.execPath,[server,...args],options),error=>error.code===1&&/Unknown|Startup failed/.test(error.stderr));
 });
 
 async function connectionApp(t,options={}){
   const instances=[];
-  const server=createApp([],{
+  const server=createApp({
     providerFactory:(config,id)=>{
-      const p={config,id,closed:false,publicInfo:()=>({id,name:config.name,provider:'postgres'}),inspect:async()=>({tables:[],capabilities:{provider:'postgres',query:false}}),close:async()=>{p.closed=true;config.password='';config.ca='';}};
+      const p={config,id,closed:false,scans:0,publicInfo:()=>({id,name:config.name,provider:'postgres'}),inspect:async()=>{p.scans++;return {tables:[],capabilities:{provider:'postgres',query:false}};},close:async()=>{p.closed=true;config.password='';config.ca='';}};
       instances.push(p);return p;
     },...options
   });
@@ -47,8 +64,8 @@ async function connectionApp(t,options={}){
   return {url,instances,browser};
 }
 const details=()=>({host:'localhost',database:'app',user:'reader',password:randomBytes(32).toString('base64url'),tls:'local'});
-test('default startup has no repo dependency and connection credentials never reach responses',async t=>{
-  const a=await connectionApp(t),b=await a.browser();assert.deepEqual(b.session.connections,[]);assert.deepEqual(b.session.repositories,[]);assert.equal(b.session.capabilities.postgres,true);
+test('default startup exposes only database connections and credentials never reach responses',async t=>{
+  const a=await connectionApp(t),b=await a.browser();assert.deepEqual(b.session.connections,[]);assert.equal(Object.hasOwn(b.session,'repositories'),false);assert.equal(b.session.capabilities.postgres,true);
   const config=details(),r=await b.post('/api/connections',config);assert.equal(r.status,201);const result=await r.json();assert.ok(!JSON.stringify(result).includes(config.password));
   const inventory=await(await fetch(a.url+'/api/session',{headers:{Cookie:b.cookie}})).json();assert.equal(inventory.connections.length,1);assert.ok(!JSON.stringify(inventory).includes(config.password));
   assert.equal((await b.post(`/api/connections/${result.connection.id}/refresh`)).status,200);

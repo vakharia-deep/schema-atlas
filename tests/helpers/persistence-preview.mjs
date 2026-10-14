@@ -9,7 +9,7 @@ const f=await fixture(),directory=path.join(f.root,'profiles'),configFile=path.j
 await writeFile(configFile,JSON.stringify(f.config),{mode:0o600});
 let server,stopping=false;
 async function start(){
-  server=createApp([],{profileStore:new ProfileStore(directory)});
+  server=createApp({profileStore:new ProfileStore(directory)});
   await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(8789,'127.0.0.1',resolve);});
 }
 async function stopServer(){if(server)await new Promise(resolve=>{server.closeAllConnections();server.close(resolve);});}

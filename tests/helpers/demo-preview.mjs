@@ -50,7 +50,7 @@ try {
     ANALYZE;`);
   const configFile = path.join(f.root, 'browser-connection.json');
   await writeFile(configFile, JSON.stringify(config), { mode: 0o600 });
-  server = createApp([], { profileStore: new ProfileStore(profileDirectory) });
+  server = createApp({ profileStore: new ProfileStore(profileDirectory) });
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(8791, '127.0.0.1', resolve); });
   console.log('Demo: http://127.0.0.1:8791/');
   console.log('Temporary connection details: ' + configFile);
