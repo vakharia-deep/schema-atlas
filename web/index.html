@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Schema Atlas · PostgreSQL explorer</title><link rel="icon" href="/favicon.svg"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/polish.css"><link rel="stylesheet" href="/query.css"><link rel="stylesheet" href="/profiling.css"></head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="/" aria-label="Schema Atlas home"><img src="/favicon.svg" alt="" width="35" height="35"><span>Schema Atlas<small>YOUR DATABASE, MAPPED.</small></span></a>
+    <div class="source-label">WORKSPACE <span class="local-dot">Local</span></div>
+    <label class="sr-only" for="repository">Database connection</label><select id="repository" aria-label="Database connection"></select>
+    <div class="source-note"><span class="dot" id="connection-dot"></span> <span id="source-type">Not connected</span> <span class="read-only">READ ONLY</span></div><button id="connect-sidebar" class="button connect-sidebar">+ Connect PostgreSQL</button><button id="manage-connections" class="button saved-sidebar">Saved connections</button>
+    <nav class="main-nav" aria-label="Views"><button class="nav active" id="diagram-nav"><span>⌘</span> Schema explorer <kbd>1</kbd></button><button class="nav" id="query-nav"><span>⌨</span> SQL workspace <kbd>2</kbd></button><button class="nav" id="profiling-nav"><span>◷</span> Query profiling <kbd>3</kbd></button><button class="nav" id="changes-nav"><span>↻</span> Changes <span id="change-count" class="count">0</span></button><button class="nav" id="coverage-nav"><span>◈</span> Scan coverage <span id="warning-count" class="count">0</span></button></nav>
+    <div class="tables-title">TABLES <span id="table-count">0</span></div>
+    <div class="search-wrap"><span>⌕</span><input id="search" placeholder="Find a table or column…" aria-label="Find a table or column" maxlength="150"><kbd>/</kbd></div>
+    <div id="table-list" class="table-list"></div>
+    <div class="sidebar-bottom"><div class="future-icon">↗</div><div><strong>Explore. Understand. Query.</strong><p>One connection, your whole<br>database in perspective.</p></div></div>
+  </aside>
+  <main>
+    <header class="topbar"><div class="breadcrumb">Workspace <span>/</span> <strong id="repo-title">No database connected</strong></div><div class="top-actions"><span class="source-badge" id="source-badge">PostgreSQL catalog</span><button id="save-connection" class="button subtle" hidden>Save connection</button><button id="disconnect" class="button subtle" hidden>Disconnect</button><button id="export" class="button subtle">↓ Export snapshot</button></div></header>
+    <section class="heading"><div><div class="eyebrow">SCHEMA EXPLORER</div><h1>Your database, clearly<span>.</span></h1><p>Explore relationships. Inspect the details. Stay in sync with your database.</p></div><button id="refresh" class="button primary" disabled><span id="refresh-icon">↻</span> Refresh schema</button></section>
+    <section class="stats"><div><span class="stat-symbol">▦</span><strong id="stat-tables">—</strong><span>Tables</span></div><div><span class="stat-symbol">⌁</span><strong id="stat-relations">—</strong><span>Relationships</span></div><div><span class="stat-symbol">≡</span><strong id="stat-indexes">—</strong><span>Indexes</span></div><div><span class="stat-symbol">◫</span><strong id="stat-partitions">—</strong><span>Partitioned tables</span></div><span id="scan-status" class="scan-status" role="status" aria-live="polite">Connect a database to begin</span></section>
+    <div id="error" class="error" role="alert" hidden></div>
+    <section class="workspace" id="workspace" aria-label="Schema workspace">
+      <div class="diagram-area">
+        <div class="canvas-toolbar">
+          <div class="toolbar-top"><div class="view-tabs"><button id="graph-view" class="active">ER diagram</button><button id="relations-view">Relationship explorer</button><button id="list-view">Table overview</button></div><div class="canvas-actions"><button class="button toolbar-button" id="toggle-details" aria-expanded="true" aria-controls="inspector">Hide details</button><button class="button toolbar-button" id="fullscreen" aria-pressed="false" aria-label="Enter full screen">⛶ Full screen</button></div></div>
+          <div class="canvas-filters"><input id="diagram-search" type="search" aria-label="Search diagram tables or columns" placeholder="Find table or column…" maxlength="150"><select id="schema-filter" aria-label="Filter by schema"><option value="">All schemas</option></select><select id="partition-filter" aria-label="Filter by partition status"><option value="">All objects</option><option value="partitioned">Partitioned tables</option><option value="partition">Partitions</option><option value="ordinary">Non-partitioned tables</option></select><label class="focus-toggle"><input id="focus" type="checkbox"> Selected + neighbors</label><span id="visible-count" class="visible-count">0 objects</span></div>
+        </div>
+        <div id="canvas">
+          <div id="diagram-viewport" tabindex="0" role="region" aria-label="Scrollable ER diagram. Scroll vertically, Shift-scroll horizontally, or drag the background. Control or Command-scroll zooms."><div id="diagram-space"><div id="world"><svg id="edges" aria-label="Table relationships"></svg><div id="nodes"></div></div></div></div>
+          <div class="canvas-empty" id="empty"><div class="connect-welcome"><div class="welcome-symbol">▦</div><h2>Your database, in perspective.</h2><p>Connect to any PostgreSQL database to explore<br>its tables, relationships, indexes and partitions.</p><button id="connect-empty" class="button primary">+ Connect PostgreSQL</button><small>No repository required · Read-only by default</small></div></div>
+          <div class="canvas-caption">Scroll to explore · Shift + scroll horizontally · Drag to pan</div>
+          <div class="zoom-controls"><button id="zoom-out" aria-label="Zoom out">−</button><button id="zoom-label" aria-label="Reset zoom to 100 percent" title="Readable size · 100%">100%</button><button id="zoom-in" aria-label="Zoom in">+</button><button id="fit" title="Fit all visible tables" aria-label="Fit diagram">Fit all</button><button id="layout" title="Reset table positions" aria-label="Reset table positions">▦</button></div>
+          <div class="legend"><span class="legend-line"></span> Foreign key <span id="association-legend" hidden><span class="legend-line dashed"></span> Ecto association</span></div>
+        </div>
+        <section id="relationship-explorer" aria-label="Relationship explorer" hidden>
+          <div class="relationship-picker"><div><label for="relationship-table-search">Find a table</label><input id="relationship-table-search" type="search" maxlength="150" placeholder="Search table names…"></div><div><label for="relationship-table">Explore relationships for</label><select id="relationship-table" aria-describedby="relationship-picker-count"></select></div><span id="relationship-picker-count" role="status"></span></div>
+          <div class="relationship-context"><button id="relationship-back" class="button subtle" disabled>← Back</button><p>One table at a time. Follow a related table to explore the next set of connections.</p></div>
+          <div id="relationship-summary"></div>
+          <div class="relationship-filter"><label for="relationship-filter">Find a related table or key</label><input id="relationship-filter" type="search" maxlength="150" placeholder="Filter this table’s relationships…"><span id="relationship-count" role="status"></span></div>
+          <div id="relationship-self"></div>
+          <div class="relationship-lanes"><section id="relationship-incoming" aria-label="Tables referencing this table"></section><section id="relationship-outgoing" aria-label="Tables referenced by this table"></section></div>
+          <p class="relationship-note">Relationships come from the same schema snapshot as the ER diagram. Links without declared foreign keys cannot be inferred. Partition membership is shown in the table details.</p>
+        </section>
+        <div id="overview" hidden></div>
+        <div class="canvas-footer"><span><span class="dot"></span> <span id="revision">Waiting for first scan</span></span><span id="provenance">Read-only PostgreSQL catalog inspection</span></div>
+      </div>
+      <aside class="inspector" id="inspector" aria-label="Table metadata"></aside>
+    </section>
+    <section id="query-workspace" class="query-workspace" aria-label="SQL workspace" hidden>
+      <div class="query-toolbar"><div class="query-title"><span class="query-symbol">SQL</span><div><strong>Query editor</strong><span id="query-connection">Connect PostgreSQL to run queries</span></div></div><div class="query-actions"><span class="query-mode">Read-only</span><button id="query-history-toggle" class="button subtle" disabled aria-expanded="false">History</button><button id="query-fullscreen" class="button subtle" aria-pressed="false">⛶ Full screen</button></div></div>
+      <div id="query-history" class="query-history" hidden><div><strong>Queries in this tab</strong><button id="query-clear-history" class="button subtle" disabled>Clear history</button></div><div id="query-history-list"></div></div>
+      <div id="query-connect-prompt" class="query-connect-prompt"><div><strong>Connect a database to start querying</strong><p>The SQL editor becomes available once a PostgreSQL connection is selected.</p></div><button id="query-connect" class="button primary">+ Connect PostgreSQL</button></div>
+      <div class="editor-heading"><span>SQL / PostgreSQL</span><span id="query-editor-shortcuts" hidden>Ctrl + Space: tables · ⌘ / Ctrl + Enter: run</span></div>
+      <div class="sql-editor-wrap"><pre id="sql-lines" aria-hidden="true">1</pre><textarea id="sql-editor" aria-label="SQL editor" aria-describedby="query-connection" disabled readonly maxlength="32000" spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off" placeholder="Connect a database to write SQL."></textarea></div>
+      <div class="query-runbar"><button id="query-run" class="button primary" disabled>▶ Run query</button><button id="query-cancel" class="button subtle" hidden>■ Cancel</button><label>Row limit <select id="query-limit" aria-label="Query row limit" disabled><option value="100">100</option><option value="500" selected>500</option><option value="1000">1,000</option></select></label><label>Timeout <select id="query-timeout" aria-label="Query timeout" disabled><option value="5000">5 seconds</option><option value="15000" selected>15 seconds</option><option value="20000">20 seconds</option></select></label><span id="query-execution" role="status" aria-live="polite">No database connected</span></div>
+      <div class="results-heading"><strong>Data output <span id="query-row-count"></span></strong><div><button id="query-export" class="button subtle" disabled>↓ Export JSON</button></div></div>
+      <div id="query-message" class="query-message" role="status">Connect a database, write SQL, and run it to see results here.</div>
+      <div id="query-results" class="query-results" tabindex="0" role="region" aria-label="Scrollable query results" hidden></div>
+      <div class="results-footer"><span id="query-result-info">Results and query history stay in this browser tab.</span><div><button id="query-prev" class="button subtle" disabled>← Previous</button><span id="query-page">0 rows</span><button id="query-next" class="button subtle" disabled>Next →</button></div></div>
+    </section>
+    <section id="profiling-workspace" class="profiling-workspace" aria-label="Query profiling workspace" hidden></section>
+  </main>
+  <dialog id="connection-dialog" aria-labelledby="connection-title">
+    <div class="dialog-header"><div><div class="eyebrow">DIRECT DATABASE CONNECTION</div><h2 id="connection-title">Connect PostgreSQL</h2></div><button id="close-connection" class="icon-button" aria-label="Close connection form">×</button></div>
+    <p class="connection-intro">Use the connection details for your PostgreSQL server. Schema Atlas reads catalog metadata to build your diagram.</p>
+    <form id="connection-form">
+      <div class="connection-grid">
+        <label class="wide">Connection name <span>optional</span><input id="db-name" name="name" maxlength="80" placeholder="e.g. Analytics staging" autocomplete="off"></label>
+        <label>Host<input id="db-host" name="host" required maxlength="253" value="127.0.0.1" placeholder="db.example.com" autocomplete="off" spellcheck="false"></label>
+        <label>Port<input id="db-port" name="port" required type="number" min="1" max="65535" value="5432"></label>
+        <label>Database<input id="db-database" name="database" required maxlength="128" placeholder="Database name" autocomplete="off" spellcheck="false"></label>
+        <label>Username<input id="db-user" name="user" required maxlength="128" placeholder="Database username" autocomplete="username" spellcheck="false"></label>
+        <label class="wide">Password<input id="db-password" name="password" type="password" maxlength="4096" autocomplete="current-password" placeholder="Database password"></label>
+        <label class="wide">Connection security<select id="db-tls" name="tls"><option value="verify">TLS · Verify server certificate</option><option value="local" selected>Localhost / SSH tunnel · No TLS</option></select></label>
+        <label class="wide" id="ca-field" hidden>CA certificate <span>optional, PEM format</span><textarea id="db-ca" name="ca" maxlength="32768" rows="3" placeholder="Paste your provider’s CA certificate if required" spellcheck="false"></textarea></label>
+      </div>
+      <label class="save-profile-option"><input id="db-save" type="checkbox" checked> Save this connection and password</label><p id="connection-storage-note" class="credentials-note">Passwords are encrypted on this server, protected by its operating system credential store.</p><p class="profile-browser-note">Use a regular browser to keep saved connections accessible. Private browsing or clearing cookies removes this browser’s access.</p>
+      <div id="connection-error" class="connection-error" role="alert" hidden></div>
+      <div class="connection-footer"><button type="button" id="cancel-connection" class="button subtle">Cancel</button><button type="submit" id="submit-connection" class="button primary">Connect & explore</button></div>
+    </form>
+  </dialog>
+  <dialog id="saved-connections-dialog" aria-labelledby="saved-connections-title"><div class="dialog-header"><div><div class="eyebrow">YOUR WORKSPACE</div><h2 id="saved-connections-title">Saved connections</h2></div><button id="close-saved-connections" class="icon-button" aria-label="Close saved connections">×</button></div><p class="connection-intro">Select a profile to reconnect without entering its password. Disconnect keeps it saved; Forget removes the saved profile.</p><div id="saved-connections-list"></div><p id="saved-connections-error" class="connection-error" role="alert" hidden></p></dialog>
+  <dialog id="report"><div class="dialog-header"><div><div class="eyebrow" id="report-eyebrow">WORKSPACE</div><h2 id="report-title">Changes</h2></div><button id="close-report" class="icon-button" aria-label="Close dialog">×</button></div><div id="report-body"></div></dialog>
+  <dialog id="query-row-dialog" aria-labelledby="query-row-title"><div class="dialog-header"><div><div class="eyebrow">RESULT DETAILS</div><h2 id="query-row-title">Row details</h2><p id="query-row-summary"></p></div><button id="query-row-close" class="icon-button" aria-label="Close row details">×</button></div><div id="query-row-values"></div></dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script type="module" src="/app.js"></script>
+</body></html>

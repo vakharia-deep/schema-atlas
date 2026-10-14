@@ -1,0 +1,32 @@
+.DS_Store
+*.log
+node_modules/
+.env
+.env.*
+!.env.example
+snapshots/
+
+# Local database output and manual verification screenshots.
+artifacts/
+exports/
+coverage/
+*.dump
+*.backup
+
+# Credentials, certificates and machine-specific configuration.
+.npmrc
+.pgpass
+.pg_service.conf
+.schema-atlas/
+credentials*.json
+connections*.json
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Local tooling and temporary files.
+.codex/
+.idea/
+.vscode/
+*.tmp
