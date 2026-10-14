@@ -1,7 +1,8 @@
 import { createQueryWorkspace } from './query.js';
 import { createProfilingWorkspace } from './profiling.js';
+import { overviewColumns, overviewRows } from './overview.js';
 const $ = id => document.getElementById(id);
-const state = { model:null, session:null, selected:null, tab:'columns', view:'graph', positions:new Map(), zoom:1, originX:60, originY:60, query:'', busy:false, sqlBusy:false, screen:'schema', fullscreen:false };
+const state = { model:null, session:null, selected:null, tab:'columns', view:'graph', positions:new Map(), zoom:1, originX:60, originY:60, query:'', busy:false, sqlBusy:false, screen:'schema', fullscreen:false, overviewSort:{column:'name',direction:'ascending'} };
 const CARD_WIDTH=280, GRAPH_PADDING=90;
 const NS = 'http://www.w3.org/2000/svg';
 // Metadata is always rendered as text; database values never become HTML or script.
@@ -280,7 +281,7 @@ function renderInspector() {
     }
   } else {
     content.append(sectionTitle('TABLE PROPERTIES'),infoGrid([['Schema',t.prefix],['Partitioned',partitionStatus(t)],['Is a partition',t.partitionOf?'Yes':'No'],['Primary key',t.primaryKey.join(', ')||'None'],['Source','PostgreSQL catalog'],['Database state','Live snapshot']]));
-    content.append(infoGrid([['Object type',t.kind],['Total size',humanBytes(t.statistics.totalBytes)],['Estimated rows',t.statistics.estimatedRows??'Not analyzed']]));
+    content.append(infoGrid([['Object type',t.kind],['Total size',humanBytes(t.statistics.totalBytes)],['Index size',humanBytes(t.statistics.indexBytes)],['Data size',humanBytes(t.statistics.dataBytes)],['Estimated rows',t.statistics.estimatedRows??'Not analyzed']]));
     if(Object.keys(t.options).length)content.append(sectionTitle('TABLE OPTIONS'),infoGrid(Object.entries(t.options)));
     if(t.viewDefinition)content.append(sqlDefinition(t.viewDefinition));
     content.append(el('br'),sectionTitle('PARTITIONS',partitionChildren(t).length));
@@ -302,13 +303,23 @@ function navigateTable(id){if(!state.model.tables.some(t=>t.id===id)){notify('Re
 function renderOverview(){
   if(state.view!=='list')return;
   clear($('overview'));const table=el('table',{class:'overview-table'});
-  table.append(el('thead',{},el('tr',{},['TABLE','TYPE','PARTITIONING','COLUMNS','INDEXES','FOREIGN KEYS','EST. ROWS','TOTAL SIZE'].map(s=>el('th',{},s)))));
-  const tbody=el('tbody'),references=new Map();for(const r of state.model.relationships)if(r.kind==='foreign_key')references.set(r.from,(references.get(r.from)||0)+1);
-  for(const t of visibleTables()){
-    const p=partitionStrategy(t),partitionText=[p?`${p.key} · ${partitionChildren(t).length} children`:null,t.partitionOf?`Partition of ${t.partitionOf}`:null].filter(Boolean).join(' · ')||'Not partitioned';
-    tbody.append(el('tr',{},el('td',{},button(t.id,()=>selectTable(t.id))),el('td',{},el('span',{class:'object-badge'+(p||t.partitionOf?' partition-badge':'')},objectKind(t))),el('td',{},partitionText),el('td',{},String(t.columns.length)),el('td',{},String(t.indexes.length)),el('td',{},String(references.get(t.id)||0)),el('td',{},t.statistics?.estimatedRows??'—'),el('td',{},humanBytes(t.statistics?.totalBytes))));
+  table.append(el('thead',{},el('tr',{},overviewColumns.map(({key,label})=>{
+    const active=state.overviewSort.column===key,direction=active?state.overviewSort.direction:'none';
+    const next=direction==='ascending'?'descending':'ascending',action=`Sort by ${label.toLowerCase()}, ${next}`;
+    return el('th',{scope:'col','aria-sort':direction},el('button',{
+      type:'button',class:'overview-sort','data-sort':key,'aria-label':action,title:action,
+      onclick:()=>{
+        state.overviewSort={column:key,direction:next};renderOverview();
+        $('overview').querySelector(`[data-sort="${key}"]`).focus({preventScroll:true});
+      },
+    },label,el('span',{class:'overview-sort-icon','aria-hidden':'true'},active?(direction==='ascending'?'↑':'↓'):'↕')));
+  }))));
+  const tbody=el('tbody');
+  for(const row of overviewRows(visibleTables(),state.model.relationships,state.overviewSort)){
+    const t=row.table;
+    tbody.append(el('tr',{},el('td',{},button(t.id,()=>selectTable(t.id))),el('td',{},el('span',{class:'object-badge'+(partitionStrategy(t)||t.partitionOf?' partition-badge':'')},row.type)),el('td',{},row.partitioning),el('td',{},String(row.columns)),el('td',{},String(row.indexes)),el('td',{},String(row.foreignKeys)),el('td',{},row.estimatedRows??'—'),el('td',{},humanBytes(row.totalBytes)),el('td',{},humanBytes(row.indexBytes)),el('td',{},humanBytes(row.dataBytes))));
   }
-  table.append(tbody);$('overview').append(table);
+  table.append(tbody);$('overview').append(table,note('Total size = data + indexes. Data includes TOAST and table overhead. Sizes belong to each object; partition parents do not include their children.'));
 }
 
 

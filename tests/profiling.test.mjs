@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import pg from 'pg';
 import { ProfilingJob, validateProfile, workloadDiff, parseCapturedLogs } from '../lib/profiling.mjs';
+import { parseSlowLogs } from '../web/slow-logs.js';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 import { normalizePlan, comparePlans } from '../web/plan.js';
 import { fixture } from './helpers/postgres.mjs';
 import { createApp } from '../server.mjs';
@@ -88,19 +91,37 @@ test('profiling works without extensions for manual plans and reports missing ca
   assert.equal(d.statistics.available,false);assert.equal(d.applicationPlans.available,false);
   const plan=await j.explain({sql:'SELECT $1::integer',parameters:[42],analyze:true});assert.equal(plan.measured,true);
   await assert.rejects(new ProfilingJob(f.config).start(),{code:'SETUP'});
+  await f.admin.query('CREATE TABLE core.usage_items(id integer PRIMARY KEY, payload text); INSERT INTO core.usage_items SELECT n, repeat(\'x\',30) FROM generate_series(1,20000) n; ANALYZE core.usage_items; CREATE SCHEMA hidden_usage; CREATE TABLE hidden_usage.private_table(id integer PRIMARY KEY);');
+  const initial=await new ProfilingJob(f.config).indexUsage();assert.equal(initial.tracking,true);assert.equal(initial.database,'postgres');
+  const initialIndex=initial.indexes.find(i=>i.name==='usage_items_pkey');assert.ok(initialIndex);assert.equal(initialIndex.primary,true);assert.equal(initialIndex.unique,true);assert.equal(initialIndex.valid,true);assert.ok(BigInt(initialIndex.bytes)>0n);
+  assert.equal(initial.indexes.some(i=>i.schema==='hidden_usage'),false);assert.equal(initial.tables.some(i=>i.schema==='hidden_usage'),false);
+  await f.admin.query('SELECT id FROM core.usage_items WHERE id=1234');await f.admin.query('SELECT pg_stat_force_next_flush()');
+  let refreshed;for(let attempt=0;attempt<10;attempt++){refreshed=await new ProfilingJob(f.config).indexUsage();if(Number(refreshed.indexes.find(i=>i.name==='usage_items_pkey').scans)>0)break;await new Promise(r=>setTimeout(r,50));}
+  assert.ok(Number(refreshed.indexes.find(i=>i.name==='usage_items_pkey').scans)>0,'real index access must reach the counter');
+  assert.ok(refreshed.tables.some(i=>i.name==='usage_items'&&Number(i.indexScans)>0));
+  await f.admin.query('SET log_min_duration_statement=0');await f.admin.query("SELECT 'slow-log-fixture'::text");
+  const imported=parseSlowLogs(await readFile(path.join(f.root,'postgres.log'),'utf8'),'postgres');assert.ok(imported.rows.some(r=>r.sql.includes('slow-log-fixture')),'real PostgreSQL stderr records are supported');
+});
+
+test('index diagnostics report disabled tracking and display limits without recommending index deletion',async()=>{
+  const job=new ProfilingJob({});let query=0;
+  job.query=async()=>++query===1?[{database:'test',track_counts:'off',stats_reset:null,server_started_at:'start'}]:query===2?[{schema:'public',table_name:'items',name:'items_pkey',scans:'0',bytes:'16384',primary:'t',unique:'t',valid:'t',ready:'t',total_count:'1001'}]:[];
+  const result=await job.indexUsage();assert.equal(result.tracking,false);assert.match(result.warnings.join(' '),/stale/);assert.match(result.warnings.join(' '),/display limit/);assert.equal(result.indexes[0].primary,true);assert.equal(result.indexes[0].lastScan,undefined);
 });
 
 test('profiling endpoints enforce ownership, CSRF, capture lifecycle, cancellation and busy limits',{timeout:30000},async t=>{
   let resolveJob,rejectJob,stops=0,working=false;
   const server=createApp({
     providerFactory:(config,id)=>({id,config,publicInfo:()=>({id,name:'test'}),inspect:async()=>({tables:[],capabilities:{query:true}}),close:async()=>{}}),
-    profilingFactory:()=>({stop(){stops++;rejectJob?.(Object.assign(new Error('cancelled'),{name:'AbortError'}));return true;},diagnostics:async()=>({statistics:{available:true},internal:{path:'private-server-path'}}),start:async()=>({startedAt:new Date().toISOString()}),finish:async()=>({rows:[],plans:[]}),explain:async()=>{working=true;return new Promise((r,j)=>{resolveJob=r;rejectJob=j;});}})
+    profilingFactory:()=>({stop(){stops++;rejectJob?.(Object.assign(new Error('cancelled'),{name:'AbortError'}));return true;},diagnostics:async()=>({statistics:{available:true},internal:{path:'private-server-path'}}),indexUsage:async()=>({database:'test',indexes:[{name:'items_pkey'}],tables:[]}),start:async()=>({startedAt:new Date().toISOString()}),finish:async()=>({rows:[],plans:[]}),explain:async()=>{working=true;return new Promise((r,j)=>{resolveJob=r;rejectJob=j;});}})
   });await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>{server.closeAllConnections();server.close();});const url=`http://127.0.0.1:${server.address().port}`;
   const browser=async()=>{const r=await fetch(url+'/api/session'),cookie=r.headers.get('set-cookie').split(';')[0],s=await r.json();return {cookie,csrf:s.csrf};};
   const one=await browser(),two=await browser(),post=(who,route,input)=>fetch(url+route,{method:'POST',headers:{Cookie:who.cookie,'X-Atlas-CSRF':who.csrf,...(input?{'Content-Type':'application/json'}:{})},...(input?{body:JSON.stringify(input)}:{})});
   const connected=await (await post(one,'/api/connections',{host:'localhost',database:'test',user:'reader',password:'',tls:'local'})).json(),id=connected.connection.id;
   const route=action=>`/api/connections/${id}/profiling/${randomBytes(16).toString('hex')}/${action}`;
   assert.equal((await post(two,route('diagnostics'))).status,404);assert.equal((await post({...one,csrf:two.csrf},route('start'))).status,403);
+  assert.equal((await post(two,route('indexes'))).status,404);assert.equal((await post({...one,csrf:two.csrf},route('indexes'))).status,403);assert.equal((await post(one,route('indexes'),{unexpected:true})).status,413);
+  assert.deepEqual((await(await post(one,route('indexes'))).json()).indexes,[{name:'items_pkey'}]);
   assert.equal((await post(one,route('diagnostics'),{unexpected:true})).status,413);
   const diagnostic=await (await post(one,route('diagnostics'))).json();assert.equal(JSON.stringify(diagnostic).includes('private-server-path'),false);
   assert.equal((await post(one,route('stop'))).status,404);assert.equal((await post(one,route('start'))).status,200);assert.equal((await post(one,route('start'))).status,409);

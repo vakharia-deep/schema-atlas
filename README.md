@@ -61,6 +61,7 @@ Check readiness, capture eight sample application queries, and open a recorded p
 - [Connect and save databases](#connect-and-save-databases)
 - [Use the schema explorer](#use-the-schema-explorer)
 - [Use the SQL workspace](#use-the-sql-workspace)
+- [Profile without PostgreSQL extensions](#profile-without-postgresql-extensions)
 - [Configure PostgreSQL profiling](#configure-postgresql-profiling)
 - [Capture an application workflow](#capture-an-application-workflow)
 - [Inspect and interpret a plan](#inspect-and-interpret-a-plan)
@@ -118,6 +119,9 @@ Dependencies apply to the **selected database connection**. A missing profiling 
 | Partition status and bounds | PostgreSQL partition metadata | Ordinary tables show **Partitioned: No**. There is no extension to enable; partitioning is a property of the table. |
 | SQL results and measured manual plans | Appropriate object privileges, including `SELECT` for queried tables | The statement fails with a permission error. Seeing table metadata does not grant access to its rows. |
 | Manual **Explain only**, **Run & profile**, and plan comparison | PostgreSQL's built-in `EXPLAIN`; a supported statement and its required privileges | No `pg_stat_statements`, `auto_explain`, or JSON logging is needed. Comparison needs two retained plans. |
+| **Index usage** and table access counters | Built-in `pg_stat_user_indexes` / `pg_stat_user_tables`, readable catalogs, schema `USAGE`, and `track_counts` enabled | No extension or restart is required. With tracking disabled, displayed counters may be stale and cannot establish current usage. |
+| Index **Last scan** | PostgreSQL 16+ | Older servers show **Unavailable**; other index counters still work. |
+| **Slow-query logs** import | Existing UTF-8 PostgreSQL JSON-lines or stderr logs containing duration plus statement/execute SQL | No database extension or server-file privilege is required for import. Without suitable logs there are no recorded executions to import; manual EXPLAIN still works. |
 | Capture **Query patterns**: calls, execution time, rows, buffers | `pg_stat_statements` preloaded and its extension installed in the selected database; statement tracking active | No workload-pattern list. Manual plans still work; captured application plans can work independently. |
 | Statistics for queries run by other database roles | Superuser or effective `pg_read_all_stats` privileges | The app restricts the workload list to the connected role's queries. Your application's queries may be absent if it uses another role. |
 | Capture **Application plans** | PostgreSQL 15+, active JSON log, `logging_collector`, `jsonlog`, `auto_explain` loaded in application sessions, JSON plan format, an enabled logging threshold, and log-reading privileges | No automatic application plans or evidence of their actual index usage. Statistics can still show workload activity. |
@@ -178,7 +182,7 @@ Run one app process per profile-storage directory. An unavailable key store or i
 | --- | --- | --- |
 | **ER diagram** | Click a table, pan or scroll, filter by schema/partition status, and use **Selected + neighbors** to focus. | Cards summarize columns and keys; lines represent catalog foreign keys. A card may show only some columns; the inspector shows the full metadata. |
 | **Relationship explorer** | Find a table and browse **References**, **Referenced by**, and self references. Click a related table to follow it; use **Back** to retrace your path. | References are outgoing foreign keys; Referenced by are incoming foreign keys. Cards show column mappings, cardinality and constraint details. |
-| **Table overview** | Browse tables in a compact list and select an object for inspection. | Useful when you need names, object types and partition status without a diagram. |
+| **Table overview** | Browse tables in a compact list and select an object for inspection. Click any column header to sort; click it again to reverse the direction. | All ten columns are sortable. Counts and sizes sort numerically, unknown statistics stay last, and the selected order survives filtering, view changes and schema refreshes within the page. |
 
 For large schemas, start with **Relationship explorer**. It initially shows eight related-table cards per direction, with **Show next** for additional cards. Its relationship filter searches related tables/keys, and it uses the full snapshot even when the ER diagram has separate filters applied.
 
@@ -196,6 +200,8 @@ The diagram starts at a readable **100%**. Scroll vertically, use **Shift + scro
 | **Details** | Ownership, row/size estimates, storage settings, row security, replica identity, constraints, partition information, triggers, policies, grants and view definitions. |
 
 Partitioned parents and child partitions have distinct badges. Inspect the strategy/key, child bounds and parent information; a nested partition can also be a partitioned parent. Parent size figures do not automatically sum child sizes. Estimated row counts come from PostgreSQL statistics, not a live `COUNT(*)`.
+
+**Total size = Data size + Index size.** Data size uses `pg_table_size`: it includes table storage, TOAST (including its storage/index), free-space and visibility maps. Index size uses `pg_indexes_size` for indexes attached to that object. These are allocated disk sizes, not just the payload of live rows. Ordinary views and foreign tables show **Unavailable**. Partition parents show their own storage; child partition sizes are separate rows. [PostgreSQL storage functions](https://www.postgresql.org/docs/current/functions-admin.html#FUNCTIONS-ADMIN-DBSIZE).
 
 ### Refresh, changes and coverage
 
@@ -218,6 +224,37 @@ Table-name suggestions appear after `FROM`/`JOIN`; **Ctrl + Space** opens comple
 Results distinguish `NULL` from empty strings and preserve exact numeric strings. Paging shows 100 retained rows at a time; it does not fetch more rows from PostgreSQL. A truncation notice means the displayed row count is not the complete query cardinality. The displayed operation duration includes client/connection work and is different from the server execution time in a plan.
 
 The workspace accepts one read-only `SELECT`, `WITH`, `EXPLAIN`, `SHOW`, `TABLE`, or `VALUES` statement per run. Writes, DDL, multi-statement scripts, and persistent transactions are unavailable. Each operation uses a fresh connection and closes it afterward. Session `SET` changes, temporary objects and prepared statements do not carry across runs. Read-only transactions do not sandbox privileged functions with external side effects; use appropriate database-role privileges.
+
+## Profile without PostgreSQL extensions
+
+Open **Query profiling** using your existing connection. **Plan inspector**, **Index usage**, and **Slow-query logs** work without `pg_stat_statements` or `auto_explain`. Each has its own tab.
+
+### Inspect index usage
+
+1. Open **Index usage**. Its first visit loads the counters; **Refresh index usage** takes a new snapshot.
+2. Search by schema, table or index. Choose **No scans recorded**, **Scans recorded**, or **Invalid / not ready**, and sort by size, scans or name.
+3. Read the index's size, scan count, entries read, heap rows fetched, constraint flags and last scan. Click the table name to open its full metadata.
+4. Check **Table access** for sequential scans, rows read sequentially and index scans. These are cumulative scan counters, not query counts or evidence of which query used an index.
+
+Zero scans means **No scans recorded** in the available statistics. It does not mean the index is safe to remove: primary/unique/exclusion constraints, rare workflows, statistics resets and activity on a different server matter. Bitmap scans and index-only scans also affect how entries-read and rows-fetched counters relate. Statistics can lag and individual objects can be reset separately; the displayed database reset time is context, not a guaranteed common start time. Counters can survive a clean server restart. [PostgreSQL statistics reference](https://www.postgresql.org/docs/current/monitoring-stats.html#MONITORING-PG-STAT-ALL-INDEXES-VIEW).
+
+This view reads counters from the connected server. It shows up to 1,000 indexes and 1,000 tables in accessible schemas, and reports incomplete coverage when capped. Partitioned parent indexes have no physical scans; inspect the child indexes. Last scan is available on PostgreSQL 16+. The tool never resets counters or drops indexes.
+
+### Import existing slow-query logs
+
+1. Export a small time window from your existing PostgreSQL logs to your laptop. Files must be UTF-8, at most 2 MB, with `.json`, `.jsonl`, `.ndjson`, `.log`, or `.txt` extension.
+2. Open **Slow-query logs** and choose the file. Parsing runs locally in a disposable browser worker; file contents are never uploaded to the Node server or PostgreSQL.
+3. Filter SQL/application/role, set a minimum logged duration, or order by duration or timestamp. Each row is a recorded execution, with up to 50 displayed per page.
+4. Choose **Review in profiler** to copy one statement to Plan inspector. Check the selected database/schema and supply `$1`, `$2`, … values yourself. Import does not reconstruct bind values or run any SQL.
+5. Use **Explain only** to see the current estimated plan. **Run & profile** executes the statement and adds load. A new plan can differ from the historical execution; the logged duration alone provides no index-usage evidence.
+
+Supported records contain `duration: … ms statement: …` or `duration: … ms execute …: …`. PostgreSQL JSON logs preserve database/user/application/timestamp fields, and records whose `dbname` differs from the selected database are excluded. Plain stderr logs support tab-indented multiline SQL; their prefix is not interpreted for identity/time, so database and timestamp show as unverified/unavailable. Confirm their origin before profiling.
+
+Malformed, oversized, unscoped and other-database records are counted and reported. CSV logs, pretty-printed JSON arrays, provider-specific wrappers, separate statement/duration records, Parse/Bind timings and `auto_explain` plans are outside this importer. Automatic application plans still use **Capture**.
+
+Existing logs typically need `log_min_duration_statement` or equivalent sampled statement logging, with SQL present in the duration record. `log_duration` alone may omit SQL, and `log_statement` can place it in a separate record. Thresholds and sampling mean this is a partial view of workload. The tool does not enable logging; your database administrator controls production settings. [PostgreSQL logging reference](https://www.postgresql.org/docs/current/runtime-config-logging.html).
+
+Imported SQL may contain private literal values. Imported records stay in this browser tab's memory, scoped to its connection, and clear on **Clear imported logs**, reload or disconnect. Plans you explicitly generate from imported SQL follow Plan inspector's separate in-memory retention rules. Parsed results are capped at 500 executions, 20,000 input lines and 1 MB output, with a three-second worker deadline. Limits are reported; export a narrower window if reached.
 
 ## Configure PostgreSQL profiling
 
@@ -485,6 +522,8 @@ A positive delta means the comparison value increased; a negative delta means it
 | --- | --- |
 | Schema snapshot | 2,000 objects; 50,000 columns; 16 MB aggregate catalog data; 25-second scan deadline; additional category-specific caps. |
 | Metadata display | Comments: 4,096 characters; expressions: 8,000; SQL definitions: 12,000. Changes beyond display limits may not be detected. |
+| Index usage | 1,000 indexes and 1,000 tables per snapshot; caps reported; uses the shared query deadlines and budgets. |
+| Imported slow logs | 2 MB UTF-8 input; 20,000 lines; 500 retained executions; 30,000 SQL bytes per record; 1 MB retained records; 3-second disposable-worker deadline; 50 executions per page. |
 | SQL workspace | 32,000 SQL bytes; up to 1,000 rows and 200 columns; 2 MiB retained result data; 8 MiB protocol response cap. |
 | SQL controls | UI row limits 100/500/1,000; statement timeouts 5/15/20 seconds. The backend accepts 100–20,000 ms and adds a connection deadline. |
 | Profiling input | Up to 64 scalar parameters, 16,000 JSON bytes total, 4,000 characters per string. The UI limits SQL to 31,000 characters; the backend byte limit includes the generated EXPLAIN wrapper. |
@@ -537,10 +576,12 @@ Database work uses fresh, bounded connections rather than an idle connection poo
 | [lib/postgres.mjs](lib/postgres.mjs) | Connection validation, TLS/address handling, catalog inspection and schema normalization. |
 | [lib/profiles.mjs](lib/profiles.mjs) | Encrypted saved profiles, OS key access and persistent browser ownership. |
 | [lib/query.mjs](lib/query.mjs) | Single-statement read-only queries, bounds, deadlines and cancellation. |
-| [lib/profiling.mjs](lib/profiling.mjs) | Diagnostics, parameterized EXPLAIN, statistics deltas and scoped JSON-log reading. |
+| [lib/profiling.mjs](lib/profiling.mjs) | Diagnostics, built-in index/table counters, parameterized EXPLAIN, statistics deltas and scoped JSON-log reading. |
 | [web/app.js](web/app.js) | Connections, schema views, metadata and workspace navigation. |
 | [web/query.js](web/query.js) | SQL editor, table completion, results, row modal and history. |
-| [web/profiling.js](web/profiling.js) | Capture, Plan inspector, Compare and Setup interfaces. |
+| [web/profiling.js](web/profiling.js) | Capture, Plan inspector, Index usage, Slow-query logs, Compare and Setup interfaces. |
+| [web/overview.js](web/overview.js) | Table-overview sorting with precise bigint statistics and unknown values last. |
+| [web/slow-logs.js](web/slow-logs.js), [web/slow-logs-worker.js](web/slow-logs-worker.js) | Local, bounded log import; no upload or automatic SQL execution. |
 | [web/plan.js](web/plan.js) | Bounded plan projection, findings and comparison metrics. |
 | [lib/schema-diff.mjs](lib/schema-diff.mjs) | Catalog snapshot comparisons for schema changes, excluding volatile statistics. |
 | [tests](tests) | Unit, HTTP and disposable PostgreSQL integration tests. |
@@ -566,6 +607,7 @@ node --test tests/query.integration.test.mjs
 node --test tests/profiling.test.mjs
 node --test tests/profiles.test.mjs
 node --test tests/autocomplete.test.mjs
+node --test tests/overview.test.mjs tests/slow-logs.test.mjs
 node --test tests/server.test.mjs
 ```
 
@@ -587,12 +629,15 @@ The complete suite needs `pg_config` on `PATH`, matching PostgreSQL server binar
 | HTTP | Host/origin checks, CSRF, connection ownership, session expiry and request/concurrency budgets. |
 | Saved profiles | Encryption, tampering, ownership, private permissions, persistence/reconnect and missing-key failure. |
 | Completion and schema changes | SQL completion contexts/catalog updates; table/column/index/partition changes and statistics-only updates. |
+| Overview and extension-free profiling | All ten overview sort columns, bigint sizes/counts, storage breakdown, built-in index counters, schema scope, slow-log format/size/depth/output limits and database filtering. |
 
 **Recorded validation, 2026-10-13:** 58 tests passed with no skips on macOS/PostgreSQL 16.15, including the native credential-store test. Dependency auditing reported zero known vulnerabilities at that time. Browser checks covered live application capture, manual plans, index metadata, comparison, cancellation, disconnected states, existing SQL/whole-row details, and laptop layouts. These are recorded results, not a substitute for rerunning checks after changes. Snyk Code was unavailable because its executable was not installed; source scanning remains unverified.
 
 **Documentation verification, 2026-10-14:** the configuration and SQL blocks in this README were applied to a disposable PostgreSQL 16 cluster. The smoke query produced ten measured rows without extensions; after setup, a capture recorded two application calls and two measured plans. The stop-logging command disabled application-plan capture on a new connection while keeping statement statistics available. Local file links, section anchors, code fences, npm script names and CLI help were checked. The full application suite was not rerun for this documentation-only update.
 
 **PostgreSQL-only cleanup verification, 2026-10-14:** after removing the application-repository reader, all 43 remaining tests passed with no skips, including native credential storage. Browser checks covered PostgreSQL connection/reconnect, ER relationships, index/partition metadata, scan coverage, an index change detected by refresh, SQL results and profiling readiness. The dependency audit reported zero known vulnerabilities. Node.js is the only application language runtime required.
+
+**Overview and extension-free profiling verification, 2026-10-14:** all 52 tests passed with no skips, including native credential storage. Real PostgreSQL tests checked storage-size identities, built-in index counters without extensions, restricted schema visibility and parsing of actual stderr duration records. Browser checks covered ten-column sorting in both directions, keyboard focus, filters, schema refresh, index filters/refresh after workload, JSON/text import, malformed-file rejection, pagination, safe text rendering, and explicit estimated/measured plans from imported SQL. Dependency auditing reported zero known vulnerabilities; secret scanning found no leaks. Snyk Code remains unavailable on this host.
 
 For optional manual fixture checks:
 
@@ -608,7 +653,7 @@ For optional manual fixture checks:
 - Refresh-based schema snapshots; no background change monitoring or durable schema-history timeline.
 - Capture windows, not continuous monitoring, distributed tracing or per-request correlation.
 - No P95 latency, per-query CPU/total-memory accounting, or automatic index recommendations/creation.
-- No durable profiling history, imported plan files, full raw-plan export, or arbitrary PostgreSQL log-file uploads.
+- No durable profiling history, imported plan files, full raw-plan export, or caller-selected server log-file paths. Slow-log import accepts local raw JSON-lines/stderr text only; it does not upload files to the server.
 - No cross-browser saved-profile sharing, application user accounts or public multi-user hosting.
 
 Configuration examples and walkthroughs use fictional database names. Schema snapshots, exported rows, screenshots and PostgreSQL logs may contain real project data; public documentation should use sanitized examples.

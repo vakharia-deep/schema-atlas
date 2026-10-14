@@ -17,6 +17,9 @@ const routes=new Map([
   ['/query.js', ['query.js','text/javascript; charset=utf-8']],
   ['/query.css', ['query.css','text/css; charset=utf-8']],
   ['/app.js', ['app.js','text/javascript; charset=utf-8']],
+  ['/overview.js', ['overview.js','text/javascript; charset=utf-8']],
+  ['/slow-logs.js', ['slow-logs.js','text/javascript; charset=utf-8']],
+  ['/slow-logs-worker.js', ['slow-logs-worker.js','text/javascript; charset=utf-8']],
   ['/polish.css', ['polish.css','text/css; charset=utf-8']],
   ['/style.css', ['style.css','text/css; charset=utf-8']],
   ['/favicon.svg', ['favicon.svg','image/svg+xml']],
@@ -146,7 +149,7 @@ export function createApp({scanLimit=30,sessionTTL=30*60_000,providerFactory=(co
         try{provider.profileId=(await profileStore.save(session.owner,provider.config)).id;return json(res,200,{connections:inventory(session),...await savedInventory(session)});}
         finally{session.connecting=false;}
       }
-      const profilingRoute=url.pathname.match(/^\/api\/connections\/(pg-[a-f0-9]{24})\/profiling\/([a-f0-9]{32})\/(diagnostics|start|stop|discard|explain)$/);
+      const profilingRoute=url.pathname.match(/^\/api\/connections\/(pg-[a-f0-9]{24})\/profiling\/([a-f0-9]{32})\/(diagnostics|indexes|start|stop|discard|explain)$/);
       if(profilingRoute){
         const [,connectionID,operationID,action]=profilingRoute,provider=session.connections.get(connectionID);
         if(!provider)throw new AtlasError('NOT_FOUND','Connection not found in this browser session.',404);
@@ -160,6 +163,7 @@ export function createApp({scanLimit=30,sessionTTL=30*60_000,providerFactory=(co
           const input=action==='explain'?await readJSON(req):(requireEmpty(req),null);
           let result;
           if(action==='explain')result=await runner.explain(input);
+          else if(action==='indexes')result=await runner.indexUsage();
           else if(action==='diagnostics'){const {internal,...visible}=await runner.diagnostics();result={...visible,activeCapture:session.captures.has(connectionID)?{startedAt:session.captures.get(connectionID).startedAt}:null};}
           else if(action==='discard'){session.captures.delete(connectionID);result={discarded:true};}
           else if(action==='start'){
