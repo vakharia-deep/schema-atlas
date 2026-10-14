@@ -14,6 +14,7 @@ The application has three workspaces:
 
 ## Contents
 
+- [See it in action](#see-it-in-action)
 - [Quick start](#quick-start)
 - [Requirements and compatibility](#requirements-and-compatibility)
 - [Feature dependencies and what stops working](#feature-dependencies-and-what-stops-working)
@@ -30,6 +31,54 @@ The application has three workspaces:
 - [Architecture and code map](#architecture-and-code-map)
 - [Development and verification](#development-and-verification)
 - [Current boundaries](#current-boundaries)
+
+## See it in action
+
+Expand a short walkthrough below. These are captures of the running application using a disposable database with **fictional shop data**. Step captions were added and pauses shortened. Query timings are illustrative, not benchmarks. [Reproduce the demos or read the text walkthroughs](docs/demos/README.md).
+
+<details>
+<summary><strong>1. Explore relationships, indexes and partitions</strong> · 18 seconds</summary>
+
+Move from the full ER diagram to one table's relationships, follow a related table, and inspect index definitions and partition bounds.
+
+![Schema explorer showing an ER diagram, related tables, index metadata and monthly partition bounds.](docs/demos/schema-explorer.gif)
+
+[Static image](docs/demos/schema-explorer.png) · [Schema explorer guide](#use-the-schema-explorer)
+
+</details>
+
+<details>
+<summary><strong>2. Complete SQL and inspect an entire result row</strong> · 15 seconds</summary>
+
+Select a table-name suggestion, run a read-only query, and open a row to read all its values, including JSON.
+
+![SQL workspace completing shop.orders, returning five orders and opening the whole-row modal.](docs/demos/sql-workspace.gif)
+
+[Static image](docs/demos/sql-workspace.png) · [SQL workspace guide](#use-the-sql-workspace)
+
+</details>
+
+<details>
+<summary><strong>3. Compare a query before and after adding an index</strong> · 18 seconds</summary>
+
+Save a measured baseline, add an index **outside the tool**, refresh the schema, and profile the same query again. Compare shows the actual change from a sequential scan to an index scan. Manual profiling needs no PostgreSQL extension.
+
+![Plan inspector and comparison showing Seq Scan changing to Index Scan through products_sku_idx.](docs/demos/index-comparison.gif)
+
+[Static image](docs/demos/index-comparison.png) · [Comparison guide](#compare-before-and-after)
+
+</details>
+
+<details>
+<summary><strong>4. Capture application queries and verify executed indexes</strong> · 19 seconds</summary>
+
+Check readiness, capture eight sample application queries, and open a recorded plan without re-running its SQL. This demo uses `pg_stat_statements`, `auto_explain`, and PostgreSQL JSON logging; see the [feature dependencies](#feature-dependencies-and-what-stops-working).
+
+![Application capture showing two query patterns and a recorded plan using products_sku_idx.](docs/demos/application-capture.gif)
+
+[Static image](docs/demos/application-capture.png) · [Capture guide](#capture-an-application-workflow)
+
+</details>
 
 ## Quick start
 
@@ -554,6 +603,7 @@ The complete suite needs `pg_config` on `PATH`, matching PostgreSQL server binar
 
 For optional manual fixture checks:
 
+- `node tests/helpers/demo-preview.mjs` starts an isolated fictional shop database/app at port 8791 for the [product walkthroughs](docs/demos/README.md). Commands: `add-index`, `workload`, `mutate`, and `stop`.
 - `node tests/helpers/preview.mjs` creates a disposable database and prints a private connection-file path. Enter `large` to create a large diagram, `mutate` to exercise schema refresh, and `stop` to clean up. Start the app separately.
 - `node tests/helpers/persistence-preview.mjs` starts a disposable database/app at port 8789. Enter `restart` to test reconnect after app restart, and `stop` to clean up the database, profile files and test key.
 
